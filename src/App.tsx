@@ -6,6 +6,7 @@ import { CodeEditor, type EditorMarker } from './components/CodeEditor';
 import { LinterOutput } from './components/LinterOutput';
 import { Documentation } from './components/Documentation';
 import { IndentationValidator, type ValidationError as IndentError } from './stages/indentation-validator';
+import { YAMLSyntaxFixer } from './utils/yaml-syntax-fixer';
 
 // Default example - Valid Kubernetes Deployment
 const DEFAULT_YAML = `apiVersion: apps/v1
@@ -127,20 +128,46 @@ function App() {
   };
 
   const handleFixIndentation = () => {
-    const result = indentationValidator.fix(yamlCode, { style: 'auto', fixTrailingSpaces: true, mode: 'indentation' });
-    if (result.fixedCount > 0) {
+    console.log('========== FIX INDENTATION CLICKED ==========');
+    console.log('Input length:', yamlCode.length);
+
+    try {
+      const fixer = new YAMLSyntaxFixer();
+      const result = fixer.fix(yamlCode, 2);
+
+      console.log('[FIX INDENT] Success:', result.success);
+      console.log('[FIX INDENT] Fixed count:', result.fixedCount);
+      console.log('[FIX INDENT] Output length:', result.content.length);
+
+      // ALWAYS update, even if no changes
       setYamlCode(result.content);
-      // Re-validate immediately
-      validateYaml(result.content);
+      setTimeout(() => validateYaml(result.content), 100);
+
+    } catch (error) {
+      console.error('[FIX INDENT] FATAL ERROR:', error);
+      alert('Fix Indentation failed: ' + (error instanceof Error ? error.message : 'Unknown error'));
     }
   };
 
   const handleFixSyntax = () => {
-    const result = indentationValidator.fix(yamlCode, { style: 'auto', fixTrailingSpaces: true, mode: 'syntax' });
-    if (result.fixedCount > 0) {
+    console.log('========== FIX SYNTAX CLICKED ==========');
+    console.log('Input length:', yamlCode.length);
+
+    try {
+      const fixer = new YAMLSyntaxFixer();
+      const result = fixer.fix(yamlCode, 2);
+
+      console.log('[FIX SYNTAX] Success:', result.success);
+      console.log('[FIX SYNTAX] Fixed count:', result.fixedCount);
+      console.log('[FIX SYNTAX] Output length:', result.content.length);
+
+      // ALWAYS update, even if no changes
       setYamlCode(result.content);
-      // Re-validate immediately
-      validateYaml(result.content);
+      setTimeout(() => validateYaml(result.content), 100);
+
+    } catch (error) {
+      console.error('[FIX SYNTAX] FATAL ERROR:', error);
+      alert('Fix Syntax failed: ' + (error instanceof Error ? error.message : 'Unknown error'));
     }
   };
 
