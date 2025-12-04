@@ -64,7 +64,12 @@ const KEY_ALIASES: Record<string, string> = {
     'replica': 'replicas',
     'namespace_': 'namespace',
     'namespce': 'namespace',
-    'namesapce': 'namespace'
+    'namesapce': 'namespace',
+    'dat': 'data',
+    'securitycontext': 'securityContext',
+    'fsgroup': 'fsGroup',
+    'runasuser': 'runAsUser',
+    'accessmodes': 'accessModes'
 };
 
 /**
@@ -85,7 +90,8 @@ const KNOWN_K8S_KEYS = new Set([
     'path', 'pathType', 'backend', 'serviceName', 'servicePort',
     'data', 'stringData', 'binaryData',
     'rules', 'verbs', 'apiGroups', 'resources',
-    'effect', 'key', 'operator', 'value', 'tolerationSeconds'
+    'effect', 'key', 'operator', 'value', 'tolerationSeconds',
+    'persistentVolumeClaim', 'accessModes', 'fsGroup', 'runAsUser', 'matchLabels', 'claimName', 'storage', 'disktype'
 ]);
 
 /**
@@ -133,11 +139,30 @@ export class YAMLFixer {
         const lines = content.split('\n');
         const normalizedLines: string[] = [];
         const changes: FixChange[] = [];
+        let inBlockScalar = false;
+        let inConfigMapData = false;
+        let configMapIndent = 0;
+
+        // Duplicate key detection state
+        const seenKeys = new Map<number, Set<string>>(); // indent level -> set of keys
+        let lastIndent = 0;
 
         for (let i = 0; i < lines.length; i++) {
             let line = lines[i];
             const original = line;
             const trimmed = line.trim();
+
+            // Handle block scalars (skip processing inside them)
+            if (trimmed.endsWith('|') || trimmed.endsWith('>')) {
+                inBlockScalar = true;
+            } else if (inBlockScalar && trimmed && !line.startsWith(' ')) {
+                inBlockScalar = false;
+            }
+
+            if (inBlockScalar && i > 0) { // Skip first line of block scalar
+                normalizedLines.push(line);
+                continue;
+            }
 
             // Skip empty lines and comments
             if (!trimmed || trimmed.startsWith('#')) {
@@ -164,12 +189,124 @@ export class YAMLFixer {
                 line = trimmedRight;
             }
 
-            const currentTrimmed = line.trim();
+            // FIX 6: ConfigMap Data Nesting
+            if (trimmed === 'data:' && (lines[i - 1]?.includes('ConfigMap') || lines[i - 2]?.includes('ConfigMap'))) {
+                inConfigMapData = true;
+                configMapIndent = line.search(/\S/);
+            } else if (inConfigMapData) {
+                if (trimmed.startsWith('---') || (line.search(/\S/) <= configMapIndent && trimmed !== '')) {
+                    inConfigMapData = false;
+                } else {
+                    // Check if line needs indentation
+                    const currentIndent = line.search(/\S/);
+                    if (currentIndent <= configMapIndent) {
+                        const newIndent = configMapIndent + this.indentSize;
+                        line = ' '.repeat(newIndent) + trimmed;
+                        changes.push({
+                            type: 'INDENT',
+                            line: i + 1,
+                            original,
+                            fixed: line,
+                            reason: 'Fixed ConfigMap data nesting',
+                            severity: 'error'
+                        });
+                    }
+                }
+            }
 
-            // 3. Fix missing colons for known K8s keys
-            // Pattern: "apiVersion v1" -> "apiVersion: v1"
-            // Pattern: "name app" -> "name: app"
-            if (!currentTrimmed.includes(':') && !currentTrimmed.startsWith('-') && !currentTrimmed.startsWith('#')) {
+            // FIX 4: Under-indentation
+            // Check if previous line was a list item "- name: something" and current line is under-indented
+            if (normalizedLines.length > 0) {
+                const prevLine = normalizedLines[normalizedLines.length - 1];
+                const prevTrimmed = prevLine.trim();
+                if (prevTrimmed.startsWith('- ') && prevTrimmed.includes(':')) {
+                    const prevDashPos = prevLine.indexOf('-');
+                    const currentIndent = line.search(/\S/);
+                    const expectedIndent = prevDashPos + 2; // Align with content of list item
+
+                    // If current line is a property (has colon) and under-indented
+                    if (trimmed.includes(':') && currentIndent < expectedIndent && currentIndent > prevDashPos) {
+                        line = ' '.repeat(expectedIndent) + trimmed;
+                        changes.push({
+                            type: 'INDENT',
+                            line: i + 1,
+                            original,
+                            fixed: line,
+                            reason: 'Fixed under-indentation relative to list item',
+                            severity: 'error'
+                        });
+                    }
+                }
+            }
+
+            let currentTrimmed = line.trim();
+
+            // FIX 1: Missing Colon Detection (General "key value" pattern)
+            // Regex: /^(\s*)([a-zA-Z0-9_-]+)\s+([a-zA-Z0-9_\/:.@=+-]+)$/
+            // Removed check for !currentTrimmed.includes(':') to handle values like "image:tag"
+            const keyValueMatch = line.match(/^(\s*)([a-zA-Z0-9_-]+)\s+([a-zA-Z0-9_\/:.@=+-]+)$/);
+            if (keyValueMatch && !currentTrimmed.startsWith('-')) {
+                const [, indent, key, value] = keyValueMatch;
+                // Only apply if the line doesn't already look like a valid key-value pair "key: value"
+                if (!line.match(/^\s*[a-zA-Z0-9_-]+:\s/)) {
+                    line = `${indent}${key}: ${value}`;
+                    changes.push({
+                        type: 'COLON',
+                        line: i + 1,
+                        original,
+                        fixed: line,
+                        reason: `Added missing colon to "${key}"`,
+                        severity: 'critical'
+                    });
+                    currentTrimmed = line.trim();
+                }
+            }
+
+            // FIX 3: Orphaned List Items
+            // Pattern: "- DATABASE_HOST" followed by "value: localhost"
+            const orphanedMatch = line.match(/^(\s*)-\s+([A-Z0-9_]+)$/);
+            if (orphanedMatch && i + 1 < lines.length) {
+                const nextLine = lines[i + 1].trim();
+                if (nextLine.startsWith('value:')) {
+                    const [, indent, key] = orphanedMatch;
+                    line = `${indent}- name: ${key}`;
+                    changes.push({
+                        type: 'STRUCTURE',
+                        line: i + 1,
+                        original,
+                        fixed: line,
+                        reason: `Fixed orphaned list item "${key}"`,
+                        severity: 'error'
+                    });
+                    currentTrimmed = line.trim();
+                }
+            }
+
+            // FIX 7: VolumeClaimTemplates and List Context Colons
+            // Pattern: "- metadata" -> "- metadata:"
+            if (currentTrimmed.startsWith('- ') && !currentTrimmed.includes(':')) {
+                const listKeyMatch = currentTrimmed.match(/^-\s+([a-zA-Z0-9_-]+)$/);
+                if (listKeyMatch) {
+                    const key = listKeyMatch[1];
+                    if (['metadata', 'spec', 'accessModes', 'volumeMounts', 'resources', 'requests', 'limits'].includes(key)) {
+                        const indent = line.match(/^(\s*)/)?.[1] || '';
+                        line = `${indent}- ${key}:`;
+                        changes.push({
+                            type: 'COLON',
+                            line: i + 1,
+                            original,
+                            fixed: line,
+                            reason: `Added missing colon to list item "${key}"`,
+                            severity: 'critical'
+                        });
+                        currentTrimmed = line.trim();
+                    }
+                }
+            }
+
+            // 3. Fix missing colons for known K8s keys (Legacy/Specific check)
+            // Updated check to handle values with colons
+            if (!currentTrimmed.match(/^[a-zA-Z0-9_-]+:/) && !currentTrimmed.startsWith('-') && !currentTrimmed.startsWith('#')) {
                 const parts = currentTrimmed.split(/\s+/);
                 if (parts.length >= 1) {
                     const potentialKey = parts[0];
@@ -190,16 +327,19 @@ export class YAMLFixer {
                             });
                         } else {
                             // Multiple words: "name app" -> "name: app"
-                            const rest = parts.slice(1).join(' ');
-                            line = `${indent}${correctKey}: ${rest}`;
-                            changes.push({
-                                type: 'COLON',
-                                line: i + 1,
-                                original,
-                                fixed: line,
-                                reason: `Added missing colon to "${correctKey}"`,
-                                severity: 'critical'
-                            });
+                            // Only apply if not already caught by Fix 1
+                            if (!keyValueMatch) {
+                                const rest = parts.slice(1).join(' ');
+                                line = `${indent}${correctKey}: ${rest}`;
+                                changes.push({
+                                    type: 'COLON',
+                                    line: i + 1,
+                                    original,
+                                    fixed: line,
+                                    reason: `Added missing colon to "${correctKey}"`,
+                                    severity: 'critical'
+                                });
+                            }
                         }
                     }
                 }
@@ -307,6 +447,62 @@ export class YAMLFixer {
                 });
             }
 
+            // FIX 5: Duplicate Key Removal (Moved to Phase 1)
+            // Logic: Track keys per indent level. Reset on dedent or list item start.
+            const currentIndent = line.search(/\S/);
+            if (currentIndent !== -1) { // Skip empty lines
+                // Reset deeper levels if we dedented
+                if (currentIndent < lastIndent) {
+                    const deeperLevels = Array.from(seenKeys.keys()).filter(l => l > currentIndent);
+                    deeperLevels.forEach(l => seenKeys.delete(l));
+                }
+
+                // Reset current level (and deeper) if we start a new list item
+                if (updatedTrimmed.startsWith('- ')) {
+                    const levelsToClear = Array.from(seenKeys.keys()).filter(l => l >= currentIndent);
+                    levelsToClear.forEach(l => seenKeys.delete(l));
+                }
+
+                // Reset ALL keys if we see a document separator
+                if (line.startsWith('---')) {
+                    seenKeys.clear();
+                    lastIndent = 0;
+                    normalizedLines.push(line);
+                    continue;
+                }
+
+                // Extract key
+                // Match "key:" or "- key:"
+                const keyExtract = line.match(/^[ -]*([a-zA-Z0-9_-]+):/);
+                if (keyExtract) {
+                    const key = keyExtract[1];
+                    const keyStart = line.indexOf(key);
+
+                    if (!seenKeys.has(keyStart)) {
+                        seenKeys.set(keyStart, new Set());
+                    }
+
+                    const keysAtLevel = seenKeys.get(keyStart)!;
+                    if (keysAtLevel.has(key)) {
+                        // DUPLICATE! Remove the line.
+                        changes.push({
+                            type: 'DUPLICATE',
+                            line: i + 1,
+                            original,
+                            fixed: '', // Empty string to remove
+                            reason: `Removed duplicate key "${key}"`,
+                            severity: 'error'
+                        });
+                        // Don't add to normalizedLines
+                        continue;
+                    } else {
+                        keysAtLevel.add(key);
+                    }
+                }
+
+                lastIndent = currentIndent;
+            }
+
             normalizedLines.push(line);
         }
 
@@ -345,7 +541,6 @@ export class YAMLFixer {
     private phase3_semanticFixes(lines: string[], _parsed: any, _aggressive: boolean): { lines: string[], changes: FixChange[] } {
         const fixedLines: string[] = [];
         const changes: FixChange[] = [];
-        const seenKeys = new Map<number, Set<string>>(); // indent level -> set of keys
 
         for (let i = 0; i < lines.length; i++) {
             let line = lines[i];
@@ -358,13 +553,20 @@ export class YAMLFixer {
                 continue;
             }
 
-            // 1. Convert string numbers to integers for numeric fields
+            // 1. Convert string numbers to integers for numeric fields (FIX 2)
             const keyMatch = trimmed.match(/^([a-zA-Z0-9_-]+):\s*(.+)$/);
             if (keyMatch) {
                 const [, key, value] = keyMatch;
 
                 if (NUMERIC_FIELDS.has(key)) {
                     const cleanValue = value.replace(/['"]/g, '').trim();
+                    const lowerValue = cleanValue.toLowerCase();
+
+                    // Word to number map
+                    const WORD_TO_NUM: Record<string, number> = {
+                        'one': 1, 'two': 2, 'three': 3, 'four': 4, 'five': 5,
+                        'six': 6, 'seven': 7, 'eight': 8, 'nine': 9, 'ten': 10
+                    };
 
                     // Handle numeric strings
                     if (!isNaN(Number(cleanValue)) && cleanValue !== '') {
@@ -381,8 +583,8 @@ export class YAMLFixer {
                         }
                     }
                     // Handle word numbers (e.g., "three" -> 3)
-                    else if (cleanValue.toLowerCase() === 'three') {
-                        line = `${' '.repeat(indent)}${key}: 3`;
+                    else if (WORD_TO_NUM[lowerValue] !== undefined) {
+                        line = `${' '.repeat(indent)}${key}: ${WORD_TO_NUM[lowerValue]}`;
                         changes.push({
                             type: 'NUMERIC',
                             line: i + 1,
@@ -393,27 +595,6 @@ export class YAMLFixer {
                         });
                     }
                 }
-
-                // 2. Detect duplicate keys at the same indent level
-                if (!seenKeys.has(indent)) {
-                    seenKeys.set(indent, new Set());
-                }
-                const keysAtLevel = seenKeys.get(indent)!;
-                if (keysAtLevel.has(key)) {
-                    changes.push({
-                        type: 'DUPLICATE',
-                        line: i + 1,
-                        original,
-                        fixed: original,
-                        reason: `Duplicate key "${key}" detected at same nesting level`,
-                        severity: 'error'
-                    });
-                }
-                keysAtLevel.add(key);
-
-                // Clear deeper levels when we dedent
-                const deeperLevels = Array.from(seenKeys.keys()).filter(l => l > indent);
-                deeperLevels.forEach(l => seenKeys.delete(l));
             }
 
             fixedLines.push(line);

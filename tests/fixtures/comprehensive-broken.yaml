@@ -1,0 +1,78 @@
+apiVersion v1
+kind Deployment
+metadata
+  name test-app
+  labels
+    app postgres
+    tier database
+spec
+  replicas: five
+  template
+    metadata
+      labels
+        app postgres
+    spec
+      containers
+        - name postgres
+          image postgres:14
+          ports
+            - containerPort 5432
+          env
+            - name POSTGRES_USER
+              value: postgres
+            - DATABASE_HOST
+              value: localhost
+            - name POSTGRES_PASSWORD
+              value s3://backups
+      securityContext
+        fsGroup 999
+        runAsUser 1000
+      volumes
+        - name data
+          persistentVolumeClaim
+            claimName postgres-pvc
+---
+apiVersion v1
+kind Service
+metadata
+  name postgres-service
+spec
+  type LoadBalancer
+  ports
+    - port 5432
+      targetPort 5432
+  selector
+    app postgres
+---
+apiVersion v1
+kind ConfigMap
+metadata
+  name postgres-config
+data
+  postgresql.conf:
+    listen_addresses = '*'
+  pg_hba.conf:
+    host all all 0.0.0.0/0 md5
+---
+apiVersion v1
+kind Secret
+metadata
+  name postgres-secret
+type Opaque
+data
+  username cG9zdGdyZXM=
+  password cG9zdGdyZXM=
+  password cG9zdGdyZXM=
+---
+apiVersion v1
+kind PersistentVolumeClaim
+metadata
+  name postgres-pvc
+spec
+  accessModes
+    - ReadWriteOnce
+  resources
+    requests
+      storage 10Gi
+  disktype ssd
+  disktype hdd
