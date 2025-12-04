@@ -7,7 +7,7 @@ A powerful, intelligent web application for validating and automatically fixing 
 ![TypeScript](https://img.shields.io/badge/TypeScript-5.6-blue)
 ![React](https://img.shields.io/badge/React-18-blue)
 
-## 🚀 Features
+## Features
 
 ### **Intelligent Semantic YAML Validator**
 Our next-generation validator understands Kubernetes YAML structure semantically, not just through pattern matching.
@@ -94,7 +94,7 @@ Comprehensive in-app documentation with:
 - Example YAML files
 - Troubleshooting
 
-## 🏗️ Architecture
+## Architecture
 
 ### **Frontend Stack**
 - **React 18** - UI framework
@@ -189,7 +189,7 @@ npm run preview
 npm run server
 ```
 
-## 📖 Usage
+## Usage
 
 ### **Web Interface**
 
