@@ -1,5 +1,6 @@
 import React, { useState, useRef, useEffect, useCallback } from 'react';
 import Editor, { type OnMount } from '@monaco-editor/react';
+import { Documentation } from './Documentation';
 
 interface ValidationError {
     line: number;
@@ -43,7 +44,7 @@ export const UnifiedValidator: React.FC = () => {
     const [errors, setErrors] = useState<ValidationError[]>([]);
     const [changes, setChanges] = useState<ValidationChange[]>([]);
     const [isValidating, setIsValidating] = useState(false);
-    const [fixedCount, setFixedCount] = useState(0);
+
     const [isValid, setIsValid] = useState(false);
     const [fixEnabled, setFixEnabled] = useState(true);
     const [theme, setTheme] = useState<'light' | 'dark'>('light');
@@ -120,7 +121,7 @@ export const UnifiedValidator: React.FC = () => {
 
             setErrors(data.errors || []);
             setChanges(data.changes || []);
-            setFixedCount(data.fixedCount);
+            setChanges(data.changes || []);
             setIsValid(data.isValid);
 
             // Open console to show results
@@ -218,7 +219,7 @@ export const UnifiedValidator: React.FC = () => {
         setOutputYaml('');
         setErrors([]);
         setChanges([]);
-        setFixedCount(0);
+
         setShowConsole(false);
     };
 
@@ -231,41 +232,62 @@ export const UnifiedValidator: React.FC = () => {
     }, {} as Record<string, ValidationError[]>);
 
     return (
-        <div className="h-screen flex flex-col bg-[var(--color-bg-primary)] overflow-hidden">
-            {/* Header Bar - 60px Fixed */}
-            <header className="h-[60px] flex items-center justify-between px-6 border-b border-[var(--color-border-light)] bg-[var(--color-bg-primary)]">
-                {/* Left: Title with Blue Dot */}
+        <div className="h-screen flex flex-col bg-gradient-to-br from-[var(--color-bg-primary)] to-[var(--color-bg-secondary)] overflow-hidden font-sans" data-theme={theme}>
+            {/* Header Bar - Clean & Minimal */}
+            <header className="h-14 flex-shrink-0 flex items-center justify-between px-5 border-b border-[var(--color-border)]/10 bg-[var(--color-bg-primary)]/70 backdrop-blur-xl z-30">
+                {/* Left: Title with Status */}
                 <div className="flex items-center gap-3">
-                    <div className="w-2 h-2 rounded-full bg-[var(--color-blue)] animate-pulse"></div>
-                    <h1 className="text-display text-lg font-semibold text-[var(--color-text-primary)]">
+                    <div className={`w-1.5 h-1.5 rounded-full ${serverStatus === 'connected' ? 'bg-[var(--color-green)]' : 'bg-[var(--color-red)]'} shadow-[0_0_8px_currentColor] animate-pulse`}></div>
+                    <h1 className="text-base font-bold tracking-tight text-[var(--color-text-primary)]">
                         YAML Validator
                     </h1>
                 </div>
 
-                {/* Right: Settings & Theme Toggle */}
-                <div className="flex items-center gap-4">
+                {/* Right: Actions */}
+                <div className="flex items-center gap-1.5">
+                    {/* Console Toggle */}
+                    <button
+                        onClick={() => setShowConsole(!showConsole)}
+                        className={`flex items-center gap-2 px-3 py-1.5 rounded-lg text-xs font-semibold transition-all duration-200 ${showConsole
+                            ? 'bg-[var(--color-blue)] text-white shadow-sm'
+                            : 'text-[var(--color-text-secondary)] hover:text-[var(--color-text-primary)] hover:bg-[var(--color-bg-secondary)]/60'
+                            }`}
+                        title="Toggle Console"
+                    >
+                        <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 9l3 3-3 3m5 0h3M5 20h14a2 2 0 002-2V6a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" />
+                        </svg>
+                        <span>Console</span>
+                        {(changes.length > 0 || errors.length > 0) && (
+                            <span className="flex items-center justify-center min-w-[18px] h-4 px-1 rounded-full bg-white/25 text-[10px] font-bold">
+                                {changes.length + errors.length}
+                            </span>
+                        )}
+                    </button>
+
+                    {/* Documentation */}
                     <button
                         onClick={() => setShowDocumentation(true)}
-                        className="p-2 text-[var(--color-text-secondary)] hover:text-[var(--color-text-primary)] transition-colors btn-press"
-                        aria-label="Documentation"
+                        className="p-2 rounded-lg text-[var(--color-text-secondary)] hover:text-[var(--color-text-primary)] hover:bg-[var(--color-bg-secondary)]/60 transition-all"
                         title="Documentation"
                     >
-                        <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M12 6.253v13m0-13C10.832 5.477 9.246 5 7.5 5S4.168 5.477 3 6.253v13C4.168 18.477 5.754 18 7.5 18s3.332.477 4.5 1.253m0-13C13.168 5.477 14.754 5 16.5 5c1.747 0 3.332.477 4.5 1.253v13C19.832 18.477 18.247 18 16.5 18c-1.746 0-3.332.477-4.5 1.253" />
                         </svg>
                     </button>
+
+                    {/* Theme Toggle */}
                     <button
                         onClick={() => setTheme(theme === 'light' ? 'dark' : 'light')}
-                        className="p-2 text-[var(--color-text-secondary)] hover:text-[var(--color-text-primary)] transition-colors btn-press"
-                        aria-label="Toggle theme"
-                        title="Toggle theme"
+                        className="p-2 rounded-lg text-[var(--color-text-secondary)] hover:text-[var(--color-text-primary)] hover:bg-[var(--color-bg-secondary)]/60 transition-all"
+                        title="Toggle Theme"
                     >
                         {theme === 'light' ? (
-                            <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                            <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M20.354 15.354A9 9 0 018.646 3.646 9.003 9.003 0 0012 21a9.003 9.003 0 008.354-5.646z" />
                             </svg>
                         ) : (
-                            <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                            <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M12 3v1m0 16v1m9-9h-1M4 12H3m15.364 6.364l-.707-.707M6.343 6.343l-.707-.707m12.728 0l-.707.707M6.343 17.657l-.707.707M16 12a4 4 0 11-8 0 4 4 0 018 0z" />
                             </svg>
                         )}
@@ -273,393 +295,375 @@ export const UnifiedValidator: React.FC = () => {
                 </div>
             </header>
 
-            {/* Main Workspace */}
-            <main className="flex-1 overflow-hidden p-6 pb-0">
-                <div className={`h-full max-w-[1600px] mx-auto flex gap-6 transition-all duration-300 ${showConsole ? 'mr-[424px]' : ''}`}>
-                    {/* Input Panel */}
-                    <div className="flex-1 flex flex-col rounded-xl border border-[var(--color-border)] overflow-hidden tint-input">
-                        {/* Panel Header */}
-                        <div className="h-10 flex items-center justify-between px-5 bg-[var(--color-bg-primary)] border-b border-[var(--color-border)]">
-                            <div>
-                                <div className="text-mono text-[13px] font-medium text-[var(--color-text-secondary)]">Input</div>
-                                <div className="text-[11px] text-[var(--color-text-tertiary)]">Paste your YAML</div>
-                            </div>
-                            {inputYaml && (
-                                <button
-                                    onClick={handleClear}
-                                    className="text-[13px] text-[var(--color-blue)] hover:opacity-70 transition-opacity btn-press"
-                                >
-                                    Clear
-                                </button>
-                            )}
-                        </div>
-                        {/* Editor */}
-                        <div className="flex-1">
-                            <Editor
-                                height="100%"
-                                defaultLanguage="yaml"
-                                value={inputYaml}
-                                onChange={(value) => setInputYaml(value || '')}
-                                onMount={handleInputEditorMount}
-                                theme={theme === 'dark' ? 'vs-dark' : 'vs'}
-                                options={{
-                                    fontFamily: 'var(--font-mono)',
-                                    fontSize: 13,
-                                    lineHeight: 20,
-                                    minimap: { enabled: false },
-                                    scrollBeyondLastLine: false,
-                                    automaticLayout: true,
-                                    padding: { top: 20, bottom: 20 },
-                                    renderLineHighlight: 'none',
-                                    smoothScrolling: true,
-                                    cursorBlinking: 'smooth',
-                                    cursorWidth: 2,
-                                    fontLigatures: true,
-                                    lineNumbers: 'on',
-                                    glyphMargin: false,
-                                    folding: false,
-                                    scrollbar: {
-                                        vertical: 'auto',
-                                        horizontal: 'auto',
-                                        useShadows: false,
-                                        verticalScrollbarSize: 8,
-                                        horizontalScrollbarSize: 8,
-                                    },
-                                }}
-                            />
-                        </div>
-                    </div>
-
-                    {/* Output Panel - Non-Editable Appearance */}
-                    <div className="flex-1 flex flex-col rounded-xl border border-[var(--color-border)] overflow-hidden bg-[#F8F8F8] dark:bg-[#2A2A2A]" style={{ opacity: 0.95 }}>
-                        {/* Panel Header with Actions */}
-                        <div className="h-10 flex items-center justify-between px-5 bg-[var(--color-bg-primary)] border-b border-[var(--color-border)]">
-                            <div className="flex items-center gap-3">
-                                <div>
-                                    <div className="text-mono text-[13px] font-medium text-[var(--color-text-secondary)]">Output</div>
-                                    <div className="text-[11px] text-[var(--color-text-tertiary)]">
-                                        {fixEnabled ? 'Fixed YAML' : 'Validation only'}
-                                    </div>
+            {/* Main Workspace Area */}
+            <div className="flex-1 flex overflow-hidden bg-[var(--color-bg-secondary)]">
+                {/* Editor Area */}
+                <main className="flex-1 flex flex-col min-w-0 transition-all duration-300">
+                    <div className="flex-1 flex h-full">
+                        {/* Input Panel */}
+                        <div className="flex-1 flex flex-col border-r border-[var(--color-border)] bg-[var(--color-bg-primary)]">
+                            {/* Panel Header */}
+                            <div className="h-12 flex items-center justify-between px-5 border-b border-[var(--color-border)] bg-[var(--color-bg-primary)]">
+                                <div className="flex items-center gap-2.5">
+                                    <div className="w-2 h-2 rounded-full bg-[var(--color-blue)]"></div>
+                                    <span className="text-[13px] font-semibold text-[var(--color-text-primary)]">Input YAML</span>
                                 </div>
-                                {outputYaml && (
-                                    <div className={`status-pill ${isValid ? 'valid' : 'warning'}`}>
-                                        {isValid ? '✓ Valid' : '⚠ Issues'}
-                                    </div>
+                                {inputYaml && (
+                                    <button
+                                        onClick={handleClear}
+                                        className="text-[12px] font-medium text-[var(--color-text-secondary)] hover:text-[var(--color-red)] transition-colors px-2.5 py-1 rounded-md hover:bg-[var(--color-bg-secondary)]"
+                                    >
+                                        Clear
+                                    </button>
                                 )}
                             </div>
-                            <div className="flex items-center gap-3">
-                                {/* Fix Toggle */}
-                                <div className="flex items-center gap-2">
-                                    <span className="text-[11px] font-medium text-[var(--color-text-secondary)]">Fix</span>
-                                    <div
-                                        className={`toggle-switch ${fixEnabled ? 'active' : ''}`}
-                                        onClick={() => setFixEnabled(!fixEnabled)}
-                                        title={fixEnabled ? 'Auto-fix enabled' : 'Auto-fix disabled'}
-                                    />
+                            {/* Editor */}
+                            <div className="flex-1 relative">
+                                <Editor
+                                    height="100%"
+                                    defaultLanguage="yaml"
+                                    value={inputYaml}
+                                    onChange={(value) => setInputYaml(value || '')}
+                                    onMount={handleInputEditorMount}
+                                    theme={theme === 'dark' ? 'vs-dark' : 'vs'}
+                                    options={{
+                                        fontFamily: "'JetBrains Mono', 'Fira Code', Consolas, monospace",
+                                        fontSize: 13,
+                                        lineHeight: 21,
+                                        minimap: { enabled: false },
+                                        scrollBeyondLastLine: false,
+                                        automaticLayout: true,
+                                        padding: { top: 20, bottom: 20 },
+                                        renderLineHighlight: 'all',
+                                        smoothScrolling: true,
+                                        cursorBlinking: 'smooth',
+                                        cursorWidth: 2,
+                                        fontLigatures: true,
+                                        lineNumbers: 'on',
+                                        glyphMargin: false,
+                                        folding: true,
+                                        scrollbar: {
+                                            vertical: 'visible',
+                                            horizontal: 'visible',
+                                            useShadows: false,
+                                            verticalScrollbarSize: 10,
+                                            horizontalScrollbarSize: 10,
+                                        },
+                                    }}
+                                />
+                            </div>
+                        </div>
+
+                        {/* Output Panel */}
+                        <div className="flex-1 flex flex-col bg-[var(--color-bg-primary)]">
+                            {/* Panel Header */}
+                            <div className="h-12 flex items-center justify-between px-5 border-b border-[var(--color-border)] bg-[var(--color-bg-primary)]">
+                                <div className="flex items-center gap-3">
+                                    <div className="flex items-center gap-2.5">
+                                        <div className={`w-2 h-2 rounded-full ${outputYaml ? (isValid ? 'bg-[var(--color-green)]' : 'bg-[var(--color-orange)]') : 'bg-[var(--color-text-tertiary)]'}`}></div>
+                                        <span className="text-[13px] font-semibold text-[var(--color-text-primary)]">
+                                            {fixEnabled ? 'Fixed Output' : 'Validation Result'}
+                                        </span>
+                                    </div>
                                 </div>
-                                {/* Validate Button */}
-                                <button
-                                    onClick={handleValidate}
-                                    disabled={isValidating || !inputYaml.trim()}
-                                    className="gradient-blue text-white px-4 py-2 rounded-lg text-[13px] font-semibold shadow-blue disabled:opacity-50 disabled:cursor-not-allowed btn-press transition-all"
-                                >
-                                    {isValidating ? (
-                                        <div className="flex items-center gap-2">
-                                            <div className="spinner border-white border-t-transparent w-3 h-3"></div>
-                                            <span>Validating...</span>
+                                <div className="flex items-center gap-2.5">
+                                    {/* Fix Toggle */}
+                                    <div className="flex items-center gap-2 px-2.5 py-1.5 rounded-lg bg-[var(--color-bg-secondary)] border border-[var(--color-border)]">
+                                        <span className="text-[11px] font-semibold text-[var(--color-text-secondary)]">Auto-Fix</span>
+                                        <div
+                                            className={`relative w-9 h-5 rounded-full transition-all cursor-pointer ${fixEnabled ? 'bg-[var(--color-green)]' : 'bg-[var(--color-border)]'}`}
+                                            onClick={() => setFixEnabled(!fixEnabled)}
+                                        >
+                                            <div className={`absolute top-0.5 left-0.5 w-4 h-4 bg-white rounded-full shadow-sm transition-transform duration-200 ${fixEnabled ? 'translate-x-4' : 'translate-x-0'}`} />
                                         </div>
-                                    ) : (
-                                        'Validate'
+                                    </div>
+
+                                    {/* Validate Button */}
+                                    <button
+                                        onClick={handleValidate}
+                                        disabled={isValidating || !inputYaml.trim()}
+                                        className="flex items-center gap-2 bg-[var(--color-blue)] hover:bg-[var(--color-blue-dark)] text-white px-4 py-2 rounded-lg text-[12px] font-bold shadow-sm disabled:opacity-50 disabled:cursor-not-allowed transition-all active:scale-95"
+                                    >
+                                        {isValidating ? (
+                                            <>
+                                                <div className="w-3.5 h-3.5 border-2 border-white/30 border-t-white rounded-full animate-spin" />
+                                                <span>Validating...</span>
+                                            </>
+                                        ) : (
+                                            <>
+                                                <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M5 13l4 4L19 7" />
+                                                </svg>
+                                                <span>Validate</span>
+                                            </>
+                                        )}
+                                    </button>
+
+                                    {/* Actions */}
+                                    {outputYaml && (
+                                        <div className="flex items-center border-l border-[var(--color-border)] pl-2.5 ml-1 gap-1">
+                                            <button
+                                                onClick={handleCopy}
+                                                className="p-2 text-[var(--color-text-secondary)] hover:text-[var(--color-blue)] hover:bg-[var(--color-bg-secondary)] rounded-lg transition-colors"
+                                                title="Copy to clipboard"
+                                            >
+                                                <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z" />
+                                                </svg>
+                                            </button>
+                                            <button
+                                                onClick={handleDownload}
+                                                className="p-2 text-[var(--color-text-secondary)] hover:text-[var(--color-blue)] hover:bg-[var(--color-bg-secondary)] rounded-lg transition-colors"
+                                                title="Download YAML"
+                                            >
+                                                <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
+                                                </svg>
+                                            </button>
+                                        </div>
                                     )}
-                                </button>
-                                {/* Copy/Download */}
-                                {outputYaml && (
-                                    <>
-                                        <button
-                                            onClick={handleCopy}
-                                            className="p-1.5 text-[var(--color-text-secondary)] hover:text-[var(--color-blue)] transition-colors btn-press"
-                                            aria-label="Copy"
-                                            title="Copy"
-                                        >
-                                            <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z" />
-                                            </svg>
-                                        </button>
-                                        <button
-                                            onClick={handleDownload}
-                                            className="p-1.5 text-[var(--color-text-secondary)] hover:text-[var(--color-blue)] transition-colors btn-press"
-                                            aria-label="Download"
-                                            title="Download"
-                                        >
-                                            <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
-                                            </svg>
-                                        </button>
-                                    </>
-                                )}
-                            </div>
-                        </div>
-                        {/* Editor - Read-only appearance */}
-                        <div className="flex-1 relative">
-                            {!outputYaml && (
-                                <div className="absolute inset-0 flex items-center justify-center text-[var(--color-text-tertiary)] text-[13px]">
-                                    {fixEnabled ? 'Fixed YAML will appear here' : 'Enable fix toggle to see fixed YAML'}
                                 </div>
-                            )}
-                            <Editor
-                                height="100%"
-                                defaultLanguage="yaml"
-                                value={outputYaml}
-                                onMount={handleOutputEditorMount}
-                                theme={theme === 'dark' ? 'vs-dark' : 'vs'}
-                                options={{
-                                    readOnly: true,
-                                    fontFamily: 'var(--font-mono)',
-                                    fontSize: 13,
-                                    lineHeight: 20,
-                                    minimap: { enabled: false },
-                                    scrollBeyondLastLine: false,
-                                    automaticLayout: true,
-                                    padding: { top: 20, bottom: 20 },
-                                    renderLineHighlight: 'none',
-                                    smoothScrolling: true,
-                                    fontLigatures: true,
-                                    lineNumbers: 'on',
-                                    glyphMargin: false,
-                                    folding: false,
-                                    domReadOnly: true,
-                                    scrollbar: {
-                                        vertical: 'auto',
-                                        horizontal: 'auto',
-                                        useShadows: false,
-                                        verticalScrollbarSize: 8,
-                                        horizontalScrollbarSize: 8,
-                                    },
-                                }}
-                            />
+                            </div>
+                            {/* Editor */}
+                            <div className="flex-1 relative">
+                                {!outputYaml && (
+                                    <div className="absolute inset-0 flex flex-col items-center justify-center text-[var(--color-text-tertiary)] z-10">
+                                        <svg className="w-16 h-16 mb-4 opacity-10" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+                                        </svg>
+                                        <p className="text-[13px] font-medium">Validation results will appear here</p>
+                                    </div>
+                                )}
+                                <Editor
+                                    height="100%"
+                                    defaultLanguage="yaml"
+                                    value={outputYaml}
+                                    onMount={handleOutputEditorMount}
+                                    theme={theme === 'dark' ? 'vs-dark' : 'vs'}
+                                    options={{
+                                        readOnly: true,
+                                        fontFamily: "'JetBrains Mono', 'Fira Code', Consolas, monospace",
+                                        fontSize: 13,
+                                        lineHeight: 21,
+                                        minimap: { enabled: false },
+                                        scrollBeyondLastLine: false,
+                                        automaticLayout: true,
+                                        padding: { top: 20, bottom: 20 },
+                                        renderLineHighlight: 'none',
+                                        smoothScrolling: true,
+                                        fontLigatures: true,
+                                        lineNumbers: 'on',
+                                        glyphMargin: false,
+                                        folding: true,
+                                        domReadOnly: true,
+                                        scrollbar: {
+                                            vertical: 'visible',
+                                            horizontal: 'visible',
+                                            useShadows: false,
+                                            verticalScrollbarSize: 10,
+                                            horizontalScrollbarSize: 10,
+                                        },
+                                    }}
+                                />
+                            </div>
                         </div>
                     </div>
-                </div>
-            </main>
+                </main>
 
-            {/* Console Slider - Right Side */}
-            {showConsole && (
-                <div className="fixed right-0 top-[60px] bottom-[32px] w-[400px] glass-strong border-l border-[var(--color-border)] z-40 flex flex-col animate-slide-in">
-                    {/* Console Header */}
-                    <div className="flex items-center justify-between px-4 py-3 border-b border-[var(--color-border)]">
-                        <h3 className="text-[15px] font-semibold text-[var(--color-text-primary)]">Console</h3>
-                        <button
-                            onClick={() => setShowConsole(false)}
-                            className="p-1 text-[var(--color-text-secondary)] hover:text-[var(--color-text-primary)] transition-colors btn-press"
-                            aria-label="Close console"
-                        >
-                            <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
-                            </svg>
-                        </button>
-                    </div>
-
-                    {/* Tabs */}
-                    <div className="flex border-b border-[var(--color-border)]">
-                        <button
-                            onClick={() => setConsoleTab('fixes')}
-                            className={`flex-1 px-4 py-2 text-[13px] font-medium transition-colors ${consoleTab === 'fixes'
-                                    ? 'text-[var(--color-blue)] border-b-2 border-[var(--color-blue)]'
-                                    : 'text-[var(--color-text-secondary)] hover:text-[var(--color-text-primary)]'
-                                }`}
-                        >
-                            Fixes ({fixedCount})
-                        </button>
-                        <button
-                            onClick={() => setConsoleTab('errors')}
-                            className={`flex-1 px-4 py-2 text-[13px] font-medium transition-colors ${consoleTab === 'errors'
-                                    ? 'text-[var(--color-blue)] border-b-2 border-[var(--color-blue)]'
-                                    : 'text-[var(--color-text-secondary)] hover:text-[var(--color-text-primary)]'
-                                }`}
-                        >
-                            Errors ({errors.length})
-                        </button>
-                    </div>
-
-                    {/* Content */}
-                    <div className="flex-1 overflow-y-auto p-4">
-                        {consoleTab === 'fixes' ? (
-                            <div className="space-y-3">
-                                {changes.length > 0 ? (
-                                    changes.map((change, idx) => (
-                                        <div key={idx} className="glass rounded-lg p-3 border border-[var(--color-border)]">
-                                            <div className="flex items-start gap-2 mb-2">
-                                                <div className="w-6 h-6 rounded-full bg-[var(--color-green)] flex items-center justify-center text-white text-[10px] font-bold">
-                                                    {change.line}
-                                                </div>
-                                                <div className="flex-1">
-                                                    <div className="text-[11px] font-semibold uppercase text-[var(--color-green)] mb-1">
-                                                        {change.type}
-                                                    </div>
-                                                    <div className="text-[12px] text-[var(--color-text-primary)] mb-2">
-                                                        {change.reason}
-                                                    </div>
-                                                    <div className="space-y-1">
-                                                        <div className="text-[11px] text-[var(--color-text-tertiary)]">Before:</div>
-                                                        <code className="block text-[11px] font-mono bg-[var(--color-bg-secondary)] px-2 py-1 rounded text-[var(--color-red)]">
-                                                            {change.original}
-                                                        </code>
-                                                        <div className="text-[11px] text-[var(--color-text-tertiary)]">After:</div>
-                                                        <code className="block text-[11px] font-mono bg-[var(--color-bg-secondary)] px-2 py-1 rounded text-[var(--color-green)]">
-                                                            {change.fixed}
-                                                        </code>
-                                                    </div>
-                                                </div>
-                                            </div>
-                                        </div>
-                                    ))
-                                ) : (
-                                    <div className="text-center py-8 text-[var(--color-text-tertiary)] text-[13px]">
-                                        No fixes applied
-                                    </div>
-                                )}
+                {/* Console Sidebar - Elegant & Minimal */}
+                {showConsole && (
+                    <aside className="w-[400px] flex-shrink-0 border-l border-[var(--color-border)]/10 bg-[var(--color-bg-primary)]/50 backdrop-blur-2xl flex flex-col animate-slide-in-right z-20">
+                        {/* Console Header */}
+                        <div className="h-12 flex items-center justify-between px-4 border-b border-[var(--color-border)]/10">
+                            <div className="flex items-center gap-2">
+                                <div className="w-6 h-6 rounded-md bg-[var(--color-blue)]/10 flex items-center justify-center">
+                                    <svg className="w-3.5 h-3.5 text-[var(--color-blue)]" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 9l3 3-3 3m5 0h3M5 20h14a2 2 0 002-2V6a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" />
+                                    </svg>
+                                </div>
+                                <h3 className="text-xs font-bold text-[var(--color-text-primary)]">Console</h3>
                             </div>
-                        ) : (
-                            <div className="space-y-3">
-                                {errors.length > 0 ? (
-                                    Object.entries(groupedErrors).map(([severity, severityErrors]) => (
-                                        <div key={severity}>
-                                            <h4 className="text-[11px] font-semibold uppercase tracking-wide text-[var(--color-text-tertiary)] mb-2">
-                                                {severity} ({severityErrors.length})
-                                            </h4>
-                                            <div className="space-y-2">
-                                                {severityErrors.map((error, idx) => (
-                                                    <div key={idx} className={`error-card ${severity}`}>
-                                                        <div className="flex items-start gap-2">
-                                                            <div className={`w-6 h-6 rounded-full flex items-center justify-center text-white text-[10px] font-bold ${severity === 'critical' || severity === 'error' ? 'bg-[var(--color-red)]' :
-                                                                    severity === 'warning' ? 'bg-[var(--color-orange)]' : 'bg-[var(--color-blue)]'
-                                                                }`}>
-                                                                {error.line}
-                                                            </div>
-                                                            <div className="flex-1">
-                                                                <div className="text-[12px] font-medium text-[var(--color-text-primary)]">
-                                                                    {error.message}
-                                                                </div>
-                                                                {error.code && (
-                                                                    <div className="text-[10px] text-[var(--color-text-tertiary)] font-mono mt-1">
-                                                                        {error.code}
-                                                                    </div>
-                                                                )}
-                                                            </div>
-                                                        </div>
-                                                    </div>
-                                                ))}
-                                            </div>
-                                        </div>
-                                    ))
-                                ) : (
-                                    <div className="text-center py-8 text-[var(--color-text-tertiary)] text-[13px]">
-                                        No errors found
-                                    </div>
-                                )}
-                            </div>
-                        )}
-                    </div>
-                </div>
-            )}
-
-            {/* Footer - Status Bar */}
-            <footer className="h-[32px] flex items-center justify-between px-6 border-t border-[var(--color-border-light)] bg-[#FAFAFA] dark:bg-[#1E1E1E] text-[11px] text-[var(--color-text-secondary)]">
-                {/* Left: Server Status */}
-                <div className="flex items-center gap-2">
-                    <div className={`w-2 h-2 rounded-full ${serverStatus === 'connected' ? 'bg-[var(--color-green)]' : 'bg-[var(--color-red)]'}`}></div>
-                    <span>{serverStatus === 'connected' ? 'Connected' : 'Disconnected'}</span>
-                </div>
-
-                {/* Center: Empty */}
-                <div></div>
-
-                {/* Right: Versions */}
-                <div className="flex items-center gap-4">
-                    <span>Frontend v1.0.0</span>
-                    <span className="text-[var(--color-border)]">|</span>
-                    <span>API v1.2.0</span>
-                </div>
-            </footer>
-
-            {/* Documentation Overlay */}
-            {showDocumentation && (
-                <>
-                    <div className="overlay" onClick={() => setShowDocumentation(false)}></div>
-                    <div className="fixed inset-4 glass-strong rounded-2xl z-[100] overflow-hidden flex flex-col animate-scale-in">
-                        <div className="flex items-center justify-between px-6 py-4 border-b border-[var(--color-border)]">
-                            <h2 className="text-xl font-semibold text-[var(--color-text-primary)]">Documentation</h2>
                             <button
-                                onClick={() => setShowDocumentation(false)}
-                                className="p-2 text-[var(--color-text-secondary)] hover:text-[var(--color-text-primary)] transition-colors btn-press"
+                                onClick={() => setShowConsole(false)}
+                                className="p-1.5 rounded-md text-[var(--color-text-secondary)] hover:text-[var(--color-text-primary)] hover:bg-[var(--color-bg-secondary)]/40 transition-all"
+                                title="Close Console"
                             >
-                                <svg className="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
                                 </svg>
                             </button>
                         </div>
-                        <div className="flex-1 overflow-y-auto p-6">
-                            <div className="max-w-3xl mx-auto prose prose-sm dark:prose-invert">
-                                <h3>YAML Validator</h3>
-                                <p>A powerful, Apple-inspired YAML validation tool with automatic fixing capabilities for Kubernetes manifests and generic YAML files.</p>
 
-                                <h4>Features</h4>
-                                <ul>
-                                    <li><strong>Real-time Validation:</strong> Instant YAML syntax and structure validation</li>
-                                    <li><strong>Auto-Fix:</strong> Automatically fix common YAML errors and formatting issues</li>
-                                    <li><strong>Kubernetes Support:</strong> Specialized validation for K8s resources</li>
-                                    <li><strong>Error Console:</strong> Detailed error reporting with line numbers and suggestions</li>
-                                    <li><strong>Dark Mode:</strong> Beautiful light and dark themes</li>
-                                </ul>
-
-                                <h4>Supported Kubernetes Resources</h4>
-                                <ul>
-                                    <li>Deployments, StatefulSets, DaemonSets</li>
-                                    <li>Services, Ingress, ConfigMaps</li>
-                                    <li>Pods, Jobs, CronJobs</li>
-                                    <li>PersistentVolumes, PersistentVolumeClaims</li>
-                                    <li>And 10+ more resource types</li>
-                                </ul>
-
-                                <h4>Keyboard Shortcuts</h4>
-                                <ul>
-                                    <li><code>Cmd/Ctrl + Enter</code> - Validate YAML</li>
-                                    <li><code>Cmd/Ctrl + S</code> - Download fixed YAML</li>
-                                    <li><code>Cmd/Ctrl + L</code> - Clear all</li>
-                                    <li><code>Esc</code> - Close panels</li>
-                                </ul>
-
-                                <h4>How to Use</h4>
-                                <ol>
-                                    <li>Paste your YAML content in the left input panel</li>
-                                    <li>Enable the "Fix" toggle if you want automatic fixes</li>
-                                    <li>Click "Validate" to check your YAML</li>
-                                    <li>View fixes and errors in the console slider</li>
-                                    <li>Copy or download the fixed YAML from the output panel</li>
-                                </ol>
-
-                                <h4>API Information</h4>
-                                <p>The validator uses a backend API running on <code>http://localhost:3001</code></p>
-                                <p><strong>Endpoint:</strong> <code>POST /api/yaml/validate</code></p>
-                                <p><strong>Features:</strong> Security checks, best practices validation, resource-specific rules</p>
-
-                                <h4>Version Information</h4>
-                                <p>Frontend: v1.0.0 | Backend API: v1.2.0</p>
-                            </div>
+                        {/* Tabs */}
+                        <div className="flex gap-0.5 p-1.5 border-b border-[var(--color-border)]/10">
+                            <button
+                                onClick={() => setConsoleTab('fixes')}
+                                className={`flex-1 flex items-center justify-center gap-1.5 px-3 py-2 rounded-md text-xs font-semibold transition-all duration-200 ${consoleTab === 'fixes'
+                                    ? 'bg-[var(--color-bg-primary)]/70 text-[var(--color-text-primary)] shadow-sm'
+                                    : 'text-[var(--color-text-secondary)] hover:text-[var(--color-text-primary)] hover:bg-[var(--color-bg-primary)]/30'
+                                    }`}
+                            >
+                                <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+                                </svg>
+                                <span>Fixes</span>
+                                {changes.length > 0 && (
+                                    <span className="flex items-center justify-center min-w-[18px] h-4 px-1 rounded-full bg-[var(--color-green)]/15 text-[var(--color-green)] text-[10px] font-bold">
+                                        {changes.length}
+                                    </span>
+                                )}
+                            </button>
+                            <button
+                                onClick={() => setConsoleTab('errors')}
+                                className={`flex-1 flex items-center justify-center gap-1.5 px-3 py-2 rounded-md text-xs font-semibold transition-all duration-200 ${consoleTab === 'errors'
+                                    ? 'bg-[var(--color-bg-primary)]/70 text-[var(--color-text-primary)] shadow-sm'
+                                    : 'text-[var(--color-text-secondary)] hover:text-[var(--color-text-primary)] hover:bg-[var(--color-bg-primary)]/30'
+                                    }`}
+                            >
+                                <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                                </svg>
+                                <span>Errors</span>
+                                {errors.length > 0 && (
+                                    <span className="flex items-center justify-center min-w-[18px] h-4 px-1 rounded-full bg-[var(--color-red)]/15 text-[var(--color-red)] text-[10px] font-bold">
+                                        {errors.length}
+                                    </span>
+                                )}
+                            </button>
                         </div>
+
+                        {/* Content */}
+                        <div className="flex-1 overflow-y-auto p-3 space-y-2.5">
+                            {consoleTab === 'fixes' ? (
+                                changes.length > 0 ? (
+                                    changes.map((change, idx) => (
+                                        <div key={idx} className="bg-[var(--color-bg-primary)]/50 backdrop-blur-sm rounded-lg border border-[var(--color-border)]/10 p-3 hover:border-[var(--color-green)]/20 hover:bg-[var(--color-bg-primary)]/60 transition-all duration-200">
+                                            <div className="flex items-start gap-2.5">
+                                                <div className="w-6 h-6 rounded-md bg-gradient-to-br from-[var(--color-green)]/15 to-[var(--color-green)]/5 text-[var(--color-green)] flex items-center justify-center text-[10px] font-bold flex-shrink-0">
+                                                    {change.line}
+                                                </div>
+                                                <div className="flex-1 min-w-0">
+                                                    <div className="flex items-center justify-between mb-2">
+                                                        <span className="text-[9px] font-bold uppercase text-[var(--color-green)] tracking-wider px-1.5 py-0.5 rounded bg-[var(--color-green)]/8">
+                                                            {change.type}
+                                                        </span>
+                                                    </div>
+                                                    <p className="text-xs text-[var(--color-text-primary)] mb-2.5 leading-relaxed break-words font-medium">
+                                                        {change.reason}
+                                                    </p>
+                                                    <div className="space-y-2">
+                                                        <div>
+                                                            <div className="text-[9px] font-bold text-[var(--color-text-tertiary)] mb-1 uppercase tracking-wide">Before:</div>
+                                                            <code className="block text-[10px] font-mono bg-[var(--color-red)]/5 text-[var(--color-red)] px-2 py-1.5 rounded border border-[var(--color-red)]/10 break-all leading-relaxed">
+                                                                {change.original}
+                                                            </code>
+                                                        </div>
+                                                        <div>
+                                                            <div className="text-[9px] font-bold text-[var(--color-text-tertiary)] mb-1 uppercase tracking-wide">After:</div>
+                                                            <code className="block text-[10px] font-mono bg-[var(--color-green)]/5 text-[var(--color-green)] px-2 py-1.5 rounded border border-[var(--color-green)]/10 break-all leading-relaxed">
+                                                                {change.fixed}
+                                                            </code>
+                                                        </div>
+                                                    </div>
+                                                </div>
+                                            </div>
+                                        </div>
+                                    ))
+                                ) : (
+                                    <div className="flex flex-col items-center justify-center h-48 text-[var(--color-text-tertiary)]">
+                                        <svg className="w-12 h-12 mb-3 opacity-20" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M5 13l4 4L19 7" />
+                                        </svg>
+                                        <p className="text-[13px] font-medium">No fixes applied</p>
+                                    </div>
+                                )
+                            ) : (
+                                errors.length > 0 ? (
+                                    Object.entries(groupedErrors).map(([severity, severityErrors]) => (
+                                        <div key={severity} className="space-y-2">
+                                            <h4 className="text-[10px] font-bold uppercase tracking-wider text-[var(--color-text-tertiary)] px-1 mb-2">
+                                                {severity} ({severityErrors.length})
+                                            </h4>
+                                            {severityErrors.map((error, idx) => (
+                                                <div key={idx} className={`bg-[var(--color-bg-primary)]/50 backdrop-blur-sm rounded-lg border-l-2 border-r border-t border-b p-3 hover:bg-[var(--color-bg-primary)]/60 transition-all duration-200 ${severity === 'critical' || severity === 'error' ? 'border-l-[var(--color-red)] border-r-[var(--color-border)]/10 border-t-[var(--color-border)]/10 border-b-[var(--color-border)]/10' :
+                                                    severity === 'warning' ? 'border-l-[var(--color-orange)] border-r-[var(--color-border)]/10 border-t-[var(--color-border)]/10 border-b-[var(--color-border)]/10' : 'border-l-[var(--color-blue)] border-r-[var(--color-border)]/10 border-t-[var(--color-border)]/10 border-b-[var(--color-border)]/10'
+                                                    }`}>
+                                                    <div className="flex items-start gap-2.5">
+                                                        <div className="flex-1 min-w-0">
+                                                            <div className="flex items-center gap-2 mb-2">
+                                                                <span className="text-[9px] font-mono bg-[var(--color-bg-secondary)]/40 px-2 py-0.5 rounded text-[var(--color-text-secondary)] font-bold">
+                                                                    Line {error.line}
+                                                                </span>
+                                                                {error.code && (
+                                                                    <span className="text-[9px] font-mono text-[var(--color-text-tertiary)] font-semibold">
+                                                                        {error.code}
+                                                                    </span>
+                                                                )}
+                                                            </div>
+                                                            <p className="text-xs font-medium text-[var(--color-text-primary)] leading-relaxed break-words">
+                                                                {error.message}
+                                                            </p>
+                                                        </div>
+                                                    </div>
+                                                </div>
+                                            ))}
+                                        </div>
+                                    ))
+                                ) : (
+                                    <div className="flex flex-col items-center justify-center h-48 text-[var(--color-text-tertiary)]">
+                                        <svg className="w-12 h-12 mb-3 opacity-20" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
+                                        </svg>
+                                        <p className="text-[13px] font-medium">No errors found</p>
+                                    </div>
+                                )
+                            )}
+                        </div>
+                    </aside>
+                )}
+            </div>
+
+            {/* Footer - Status Bar */}
+            <footer className="h-[32px] flex-shrink-0 flex items-center justify-between px-6 border-t border-[var(--color-border-light)] bg-[var(--color-bg-primary)] text-[11px] text-[var(--color-text-secondary)]">
+                <div className="flex items-center gap-4">
+                    <div className="flex items-center gap-2">
+                        <div className={`w-1.5 h-1.5 rounded-full ${serverStatus === 'connected' ? 'bg-[var(--color-green)]' : 'bg-[var(--color-red)]'}`}></div>
+                        <span className="font-medium">{serverStatus === 'connected' ? 'System Online' : 'System Offline'}</span>
                     </div>
-                </>
+                </div>
+                <div className="flex items-center gap-4">
+                    <span>Frontend v2.0.0</span>
+                    <span className="text-[var(--color-border)]">|</span>
+                    <span>Validator Engine v1.5.0</span>
+                </div>
+            </footer>
+
+            {/* Documentation Overlay - Full Screen */}
+            {showDocumentation && (
+                <div className="fixed inset-0 z-50 bg-[var(--color-bg-primary)] animate-fade-in">
+                    <div className="absolute top-4 right-4 z-50">
+                        <button
+                            onClick={() => setShowDocumentation(false)}
+                            className="p-2 rounded-full bg-[var(--color-bg-secondary)] hover:bg-[var(--color-bg-tertiary)] text-[var(--color-text-primary)] shadow-md transition-all hover:scale-105"
+                        >
+                            <svg className="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                            </svg>
+                        </button>
+                    </div>
+                    <Documentation />
+                </div>
             )}
 
             {/* Toast Notifications */}
-            <div className="fixed top-20 right-6 z-[100] space-y-2">
+            <div className="fixed top-20 right-6 z-[100] space-y-2 pointer-events-none">
                 {toasts.map((toast) => (
                     <div
                         key={toast.id}
-                        className="glass-strong texture px-4 py-3 rounded-xl shadow-lg flex items-center gap-3 animate-slide-up"
+                        className="glass-strong texture px-4 py-3 rounded-xl shadow-lg flex items-center gap-3 animate-slide-up pointer-events-auto border border-[var(--color-border)]/50"
                     >
                         <span className={`text-lg ${toast.type === 'success' ? 'text-[var(--color-green)]' :
-                                toast.type === 'error' ? 'text-[var(--color-red)]' : 'text-[var(--color-blue)]'
+                            toast.type === 'error' ? 'text-[var(--color-red)]' : 'text-[var(--color-blue)]'
                             }`}>
                             {toast.type === 'success' ? '✓' : toast.type === 'error' ? '✕' : 'ℹ'}
                         </span>
