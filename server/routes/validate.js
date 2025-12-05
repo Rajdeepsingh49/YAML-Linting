@@ -48,37 +48,61 @@ router.post('/validate', async (req, res) => {
         const timeMilliseconds = Number(timeNanoseconds) / 1_000_000;
         const processingTime = Math.round(timeMilliseconds * 10) / 10;
 
-        // Calculate statistics
-        const totalIssues = fixResult.changes.length + fixResult.errors.length;
-        const fixesApplied = fixResult.changes.length;
-        const successRate = totalIssues > 0 ? Math.round((fixesApplied / totalIssues) * 100) : 100;
+        // Calculate detailed statistics for ValidationSummary
+        const changes = fixResult.changes;
+        const errors = fixResult.errors;
 
-        const statistics = {
-            totalIssues: totalIssues,
-            fixesApplied: fixesApplied,
-            averageConfidence: fixResult.confidence,
-            confidencePercent: Math.round(fixResult.confidence * 100),
-            processingTime: processingTime,
-            successRate: successRate
+        const byCategory = { syntax: 0, structure: 0, semantic: 0, type: 0 };
+        const bySeverity = { critical: 0, error: 0, warning: 0, info: 0 };
+        const byConfidence = { high: 0, medium: 0, low: 0 };
+
+        changes.forEach(change => {
+            // Category
+            const type = change.type.toLowerCase();
+            if (byCategory[type] !== undefined) byCategory[type]++;
+            else if (type.includes('syntax')) byCategory.syntax++;
+            else if (type.includes('structure')) byCategory.structure++;
+            else if (type.includes('semantic')) byCategory.semantic++;
+            else if (type.includes('type')) byCategory.type++;
+            else byCategory.semantic++; // Default
+
+            // Severity
+            if (bySeverity[change.severity] !== undefined) bySeverity[change.severity]++;
+
+            // Confidence
+            if (change.confidence >= 0.9) byConfidence.high++;
+            else if (change.confidence >= 0.7) byConfidence.medium++;
+            else byConfidence.low++;
+        });
+
+        const summary = {
+            totalIssues: changes.length + errors.length,
+            byCategory,
+            bySeverity,
+            byConfidence,
+            parsingSuccess: fixResult.isValid,
+            fixedCount: changes.length,
+            remainingIssues: errors.length,
+            overallConfidence: fixResult.confidence,
+            processingTimeMs: processingTime
         };
 
         // Console logging for verification
         console.log('=== VALIDATION COMPLETE ===');
-        console.log('Total issues:', statistics.totalIssues);
-        console.log('Fixed issues:', statistics.fixesApplied);
-        console.log('Success rate:', statistics.successRate + '%');
-        console.log('Avg confidence:', (statistics.averageConfidence * 100).toFixed(1) + '%');
-        console.log('Processing time:', statistics.processingTime + 'ms');
+        console.log('Total issues:', summary.totalIssues);
+        console.log('Fixed issues:', summary.fixedCount);
+        console.log('Avg confidence:', (summary.overallConfidence * 100).toFixed(1) + '%');
+        console.log('Processing time:', summary.processingTimeMs + 'ms');
 
         return res.json({
             success: true,
-            originalValid: fixResult.changes.length === 0 && fixResult.errors.length === 0,
+            originalValid: changes.length === 0 && errors.length === 0,
             fixed: fixResult.content,
-            errors: fixResult.errors.map(e => ({ message: e, severity: 'error', line: 0 })), // Map string errors to objects
-            fixedCount: fixResult.changes.length,
-            changes: fixResult.changes,
+            errors: errors.map(e => typeof e === 'string' ? { message: e, severity: 'error', line: 0, code: 'UNKNOWN', fixable: false } : e),
+            fixedCount: changes.length,
+            changes: changes,
             isValid: fixResult.isValid,
-            statistics: statistics,
+            summary: summary,
             confidence: fixResult.confidence
         });
 

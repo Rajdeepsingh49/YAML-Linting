@@ -231,7 +231,65 @@ const NUMERIC_PATTERNS = [
 const VALID_TOP_LEVEL_FIELDS = new Set([
     'apiVersion', 'kind', 'metadata', 'spec', 'data', 'stringData', 'type',
     'rules', 'subjects', 'roleRef', 'webhooks', 'caBundle', 'status',
-    'items', 'secrets', 'imagePullSecrets', 'parameters', 'provisioner'
+    'items', 'secrets', 'imagePullSecrets', 'parameters', 'provisioner',
+    'immutable', 'binaryData', 'automountServiceAccountToken'
+]);
+
+// Common field name typos and their corrections
+const FIELD_TYPO_MAP: Record<string, string> = {
+    'meta': 'metadata',
+    'metdata': 'metadata',
+    'metaData': 'metadata',
+    'Meta': 'metadata',
+    'speC': 'spec',
+    'specS': 'spec'
+};
+
+// Comprehensive list of known parent keywords that need colons
+// Comprehensive list of known parent keywords that need colons
+const KNOWN_PARENT_KEYWORDS = new Set([
+    // Resource blocks
+    'requests', 'limits', 'resources',
+
+    // Refs
+    'configMapRef', 'secretRef', 'configMapKeyRef', 'secretKeyRef',
+    'fieldRef', 'resourceFieldRef', 'scaleTargetRef',
+
+    // Selectors
+    'labelSelector', 'nodeSelector', 'podSelector', 'namespaceSelector',
+    'matchExpressions', 'matchLabels', 'matchFields',
+
+    // Networking
+    'backend', 'service', 'ingress', 'target', 'http', 'paths', 'rules', 'tls', 'hosts',
+
+    // Affinity/Scheduling
+    'affinity', 'nodeAffinity', 'podAffinity', 'podAntiAffinity',
+    'podAffinityTerm', 'nodeSelectorTerm', 'preference',
+    'weightedPodAffinityTerm', 'topologySpreadConstraints',
+
+    // Probes/Lifecycle
+    'livenessProbe', 'readinessProbe', 'startupProbe',
+    'httpGet', 'tcpSocket', 'exec', 'grpc',
+    'lifecycle', 'preStop', 'postStart',
+
+    // Metrics/Scaling
+    'resource', 'metric', 'external', 'object', 'pods',
+
+    // Security
+    'securityContext', 'capabilities', 'seLinuxOptions',
+
+    // Volumes
+    'volumeMounts', 'volumes', 'volumeClaimTemplates',
+    'emptyDir', 'configMap', 'secret', 'persistentVolumeClaim', 'hostPath',
+    'downwardAPI', 'projected', 'awsElasticBlockStore', 'gcePersistentDisk',
+
+    // Policy
+    'tolerations', 'rollingUpdate', 'strategy',
+
+    // Other common parents
+    'metadata', 'spec', 'template', 'data', 'stringData', 'status',
+    'env', 'envFrom', 'containers', 'initContainers',
+    'ports', 'valueFrom', 'clientIP', 'sessionAffinityConfig'
 ]);
 
 // Universal patterns for nested structures
@@ -369,22 +427,31 @@ export class MultiPassFixer {
     // PASS 1: SYNTAX NORMALIZATION
     // ==========================================
 
-    private pass1SyntaxNormalization(content: string): { content: string; changes: FixChange[] } {
-        const lines = content.split('\n');
+    public pass1SyntaxNormalization(content: string): { content: string; changes: FixChange[] } {
+        let currentLines = content.split('\n');
         const changes: FixChange[] = [];
-        const fixedLines: string[] = [];
+
+        // UNIVERSAL FIX 1: Field Name Validation
+        const isRootLevel = currentLines.map(l => this.getIndent(l) === 0);
+        const fieldNameResult = this.validateTopLevelFields(currentLines, isRootLevel);
+        currentLines = fieldNameResult.lines;
+        if (fieldNameResult.changes.length > 0) {
+            changes.push(...fieldNameResult.changes);
+        }
 
         // FINAL FIX 10: Detect block scalars FIRST to preserve ConfigMap/Secret content
-        this.blockScalarLines = this.detectBlockScalars(lines);
+        this.blockScalarLines = this.detectBlockScalars(currentLines);
 
         // Track fix counts for console logging
         let unclosedQuoteCount = 0;
         let typoCount = 0;
         let wordNumberCount = 0;
 
-        for (let i = 0; i < lines.length; i++) {
+        const fixedLines: string[] = [];
+
+        for (let i = 0; i < currentLines.length; i++) {
             const lineNumber = i + 1;
-            let line = lines[i];
+            let line = currentLines[i];
 
             // Skip document separators, comments, and empty lines
             if (line.trim() === '---' || line.trim() === '...' ||
@@ -515,7 +582,7 @@ export class MultiPassFixer {
             }
 
             // 1.8: Universal Bare Key Detection
-            const bareKeyResult = this.detectUniversalBareKey(line, i, lines);
+            const bareKeyResult = this.detectUniversalBareKey(line, i, currentLines);
             if (bareKeyResult) {
                 changes.push(bareKeyResult.change);
                 line = bareKeyResult.fixedLine;
@@ -533,7 +600,7 @@ export class MultiPassFixer {
 
         // CRITICAL FIX 4: List Parent Colons (Block-level)
         const listParentResult = this.fixListParentColons(fixedLines);
-        let currentLines = listParentResult.lines;
+        currentLines = listParentResult.lines;
         if (listParentResult.changes.length > 0) {
             changes.push(...listParentResult.changes);
         }
@@ -625,6 +692,17 @@ export class MultiPassFixer {
             console.log('Annotation colons added:', annotationResult.changes.length);
             console.log('Ref field colons added:', refResult.changes.length);
             console.log('VolumeClaimTemplate colons added:', volumeClaimResult.changes.length);
+        }
+
+        // DEBUG: Verify Pass 1 Output
+        if (finalContent.includes('tcpSocket') && finalContent.includes('httpGet') && finalContent.includes('livenessProbe')) {
+            console.log('[PASS 1 END] WARNING: tcpSocket still present in livenessProbe!');
+            const lines = finalContent.split('\n');
+            lines.forEach((l, i) => {
+                if (l.includes('livenessProbe') || l.includes('tcpSocket') || l.includes('httpGet')) {
+                    console.log(`[PASS 1] ${i + 1}: ${l}`);
+                }
+            });
         }
 
         this.changes.push(...changes);
@@ -747,6 +825,7 @@ export class MultiPassFixer {
 
         // Iterate through lines to find parents matching patterns
         for (let i = 0; i < newLines.length; i++) {
+            if (this.blockScalarLines.has(i)) continue;
             const line = newLines[i];
 
             // Check all patterns
@@ -784,8 +863,12 @@ export class MultiPassFixer {
                         j++;
                     }
 
-                    // Check if children match the child pattern
-                    const matchingChildren = children.filter(c => pattern.childPattern.test(c.key));
+                    // Check if children match the child pattern AND are direct children (correct indentation)
+                    const expectedChildIndent = parentIndentLen + this.options.indentSize;
+                    const matchingChildren = children.filter(c =>
+                        pattern.childPattern.test(c.key) &&
+                        c.indent === expectedChildIndent
+                    );
 
                     if (matchingChildren.length > 0 && pattern.wrapperKey) {
                         const wrapper = pattern.wrapperKey;
@@ -1029,37 +1112,25 @@ export class MultiPassFixer {
      * Fixes: meta: -> metadata:, met -> metadata
      */
     private fixFieldNameTypos(line: string, lineNumber: number): { fixedLine: string; change: FixChange } | null {
-        // Pattern 1: "meta:" on a line (should be "metadata:")
-        const metaMatch = line.match(/^(\s*)meta:\s*$/);
-        if (metaMatch) {
-            const fixedLine = line.replace('meta:', 'metadata:');
-            return {
-                fixedLine,
-                change: {
-                    line: lineNumber,
-                    original: line,
-                    fixed: fixedLine,
-                    reason: 'Fixed field name typo: "meta" -> "metadata"',
-                    type: 'syntax',
-                    confidence: 0.98,
-                    severity: 'error'
-                }
-            };
-        }
+        // Universal field name typo detection using FIELD_TYPO_MAP
+        const match = line.match(/^(\s*)([a-zA-Z]+):\s*(.*)$/);
+        if (!match) return null;
 
-        // Pattern 2: "met" alone (should be "metadata")
-        const metMatch = line.match(/^(\s*)met\s*$/);
-        if (metMatch) {
-            const fixedLine = line.replace(/^(\s*)met\s*$/, '$1metadata:');
+        const [, indent, fieldName, rest] = match;
+
+        // Check if this field is a known typo
+        if (FIELD_TYPO_MAP[fieldName]) {
+            const correctField = FIELD_TYPO_MAP[fieldName];
+            const fixedLine = `${indent}${correctField}: ${rest}`;
             return {
                 fixedLine,
                 change: {
                     line: lineNumber,
                     original: line,
                     fixed: fixedLine,
-                    reason: 'Fixed field name typo: "met" -> "metadata:"',
+                    reason: `Fixed field name typo: "${fieldName}" → "${correctField}"`,
                     type: 'syntax',
-                    confidence: 0.98,
+                    confidence: 0.99,
                     severity: 'error'
                 }
             };
@@ -1199,13 +1270,26 @@ export class MultiPassFixer {
      * EDGE CASE FIX 1: Duplicate Probe Type Declarations
      * Removes duplicate probe types, keeping only the one with children
      */
+    /**
+     * EDGE CASE FIX 1: Duplicate Probe Type Declarations
+     * Removes duplicate probe types, keeping only the best one based on priority
+     * Priority: exec > httpGet > tcpSocket > grpc
+     */
     private deduplicateProbeTypes(lines: string[]): { lines: string[]; changes: FixChange[] } {
         const changes: FixChange[] = [];
         const probeTypes = ['httpGet', 'tcpSocket', 'exec', 'grpc'];
+        // Priority map (higher number = higher priority)
+        const typePriority: Record<string, number> = {
+            'exec': 4,
+            'httpGet': 3,
+            'tcpSocket': 2,
+            'grpc': 1
+        };
         const probeBlocks = ['livenessProbe', 'readinessProbe', 'startupProbe'];
         const resultLines = [...lines];
 
         for (let i = 0; i < resultLines.length; i++) {
+            if (this.blockScalarLines.has(i)) continue;
             const line = resultLines[i];
 
             // Check if this is a probe block start
@@ -1213,96 +1297,207 @@ export class MultiPassFixer {
             if (!probeMatch) continue;
 
             const probeIndent = this.getIndent(line);
-            const foundTypes: Record<string, number[]> = {};
-            const allProbeTypeIndices: number[] = [];
+            const foundTypes: { type: string; index: number; hasChildren: boolean; childrenCount: number }[] = [];
 
             // Scan the probe block
             for (let j = i + 1; j < resultLines.length; j++) {
-                const currentIndent = this.getIndent(resultLines[j]);
+                const currentLine = resultLines[j];
+                const currentIndent = this.getIndent(currentLine);
 
                 // Stop when we exit the probe block
-                if (currentIndent <= probeIndent && resultLines[j].trim() !== '') break;
+                if (currentIndent <= probeIndent && currentLine.trim() !== '') break;
 
                 // Check for probe type declarations
-                probeTypes.forEach(type => {
-                    const match = resultLines[j].match(new RegExp(`^\\s*${type}:?\\s*$`));
+                for (const type of probeTypes) {
+                    const match = currentLine.match(new RegExp(`^\\s*${type}:?\\s*$`));
                     if (match) {
-                        if (!foundTypes[type]) {
-                            foundTypes[type] = [];
+                        // Check for children
+                        let hasChildren = false;
+                        let childrenCount = 0;
+                        let k = j + 1;
+                        while (k < resultLines.length) {
+                            const childLine = resultLines[k];
+                            if (childLine.trim() === '') { k++; continue; }
+                            if (this.getIndent(childLine) <= currentIndent) break;
+                            hasChildren = true;
+                            childrenCount++;
+                            k++;
                         }
-                        foundTypes[type].push(j);
-                        allProbeTypeIndices.push(j);
+
+                        foundTypes.push({ type, index: j, hasChildren, childrenCount });
+                        break; // Found type for this line
                     }
-                });
+                }
             }
 
             // Kubernetes rule: A probe can have ONLY ONE probe type
-            // Keep the LAST probe type that has children, remove all others
-            const typeNames = Object.keys(foundTypes);
-            const totalProbeTypeLines = allProbeTypeIndices.length;
+            if (foundTypes.length > 0) {
+                // Sort by: hasChildren (desc), priority (desc), index (desc - keep last found)
+                foundTypes.sort((a, b) => {
+                    if (a.hasChildren !== b.hasChildren) return a.hasChildren ? -1 : 1;
+                    if (typePriority[a.type] !== typePriority[b.type]) return typePriority[b.type] - typePriority[a.type];
+                    return b.index - a.index;
+                });
 
-            if (totalProbeTypeLines > 1) {
-                let keepIndex = -1;
-                let keepType = '';
+                const keep = foundTypes[0];
+                const keepIndex = keep.index;
+                const keepType = keep.type;
 
-                // Find the LAST probe type with children
-                for (let i = allProbeTypeIndices.length - 1; i >= 0; i--) {
-                    const idx = allProbeTypeIndices[i];
-                    const nextLine = resultLines[idx + 1];
-                    if (nextLine && this.getIndent(nextLine) > this.getIndent(resultLines[idx])) {
-                        keepIndex = idx;
-                        // Determine which type this is
-                        for (const type of typeNames) {
-                            if (foundTypes[type].includes(idx)) {
-                                keepType = type;
-                                break;
-                            }
-                        }
-                        break;
-                    }
-                }
-
-                // If no probe type has children, keep the last one
-                if (keepIndex === -1 && allProbeTypeIndices.length > 0) {
-                    keepIndex = allProbeTypeIndices[allProbeTypeIndices.length - 1];
-                    for (const type of typeNames) {
-                        if (foundTypes[type].includes(keepIndex)) {
-                            keepType = type;
-                            break;
-                        }
-                    }
-                }
+                console.log(`[ProbeFix] Block at line ${i + 1}. Found: ${foundTypes.map(f => `${f.type}(${f.hasChildren},${f.index})`).join(', ')}. Keeping: ${keepType} at ${keepIndex}`);
 
                 // Remove ALL other probe types
-                for (const idx of allProbeTypeIndices) {
-                    if (idx !== keepIndex) {
-                        const lineContent = resultLines[idx];
-                        const typeMatch = probeTypes.find(t => lineContent.includes(t));
-
+                for (const probe of foundTypes) {
+                    if (probe.index !== keepIndex) {
+                        console.log(`[ProbeFix] Removing ${probe.type} at ${probe.index}`);
                         changes.push({
-                            line: idx + 1,
-                            original: resultLines[idx],
+                            line: probe.index + 1,
+                            original: resultLines[probe.index],
                             fixed: '(removed)',
-                            reason: `Removed ${typeMatch === keepType ? 'duplicate' : 'conflicting'} probe type "${typeMatch}" (keeping "${keepType}")`,
+                            reason: `Removed conflicting probe type "${probe.type}" (keeping "${keepType}" with priority ${typePriority[keepType]})`,
                             type: 'structure',
-                            confidence: 0.88,
+                            confidence: 0.95,
                             severity: 'warning'
                         });
-                        resultLines[idx] = ''; // Mark for deletion
+
+                        // CRITICAL FIX: Get indent BEFORE clearing the line
+                        const probeTypeIndent = this.getIndent(resultLines[probe.index]);
+                        resultLines[probe.index] = ''; // Mark for deletion
+
+                        // Also remove children of this probe type
+                        for (let j = probe.index + 1; j < resultLines.length; j++) {
+                            const childLine = resultLines[j];
+                            if (childLine.trim() === '') continue;
+                            const childIndent = this.getIndent(childLine);
+                            if (childIndent <= probeTypeIndent) break;
+                            resultLines[j] = ''; // Mark child for deletion
+                        }
+                    }
+                }
+
+                // Ensure kept probe type has colon
+                if (!resultLines[keepIndex].includes(':')) {
+                    const oldLine = resultLines[keepIndex];
+                    resultLines[keepIndex] = oldLine.trimEnd() + ':';
+                    changes.push({
+                        line: keepIndex + 1,
+                        original: oldLine,
+                        fixed: resultLines[keepIndex],
+                        reason: `Added missing colon to probe type "${keepType}"`,
+                        type: 'syntax',
+                        confidence: 0.98,
+                        severity: 'error'
+                    });
+                }
+
+                // FIX 3: Fix probe child indentation
+                // Children should be indented exactly 2 spaces deeper than the probe type
+                const baseIndent = this.getIndent(resultLines[keepIndex]);
+                const expectedChildIndent = baseIndent + 2;
+
+                for (let j = keepIndex + 1; j < resultLines.length; j++) {
+                    const childLine = resultLines[j];
+                    if (childLine.trim() === '') continue;
+
+                    // Stop if we hit something at same level or higher
+                    const currentChildIndent = this.getIndent(childLine);
+                    if (currentChildIndent <= baseIndent) break;
+
+                    // If indentation is wrong (e.g. 6 spaces instead of 4), fix it
+                    if (currentChildIndent !== expectedChildIndent) {
+                        const trimmedContent = childLine.trimStart();
+                        const fixedLine = ' '.repeat(expectedChildIndent) + trimmedContent;
+
+                        changes.push({
+                            line: j + 1,
+                            original: childLine,
+                            fixed: fixedLine,
+                            reason: `Fixed indentation for probe child (expected ${expectedChildIndent} spaces, found ${currentChildIndent})`,
+                            type: 'structure',
+                            confidence: 0.95,
+                            severity: 'warning'
+                        });
+                        resultLines[j] = fixedLine;
                     }
                 }
             }
         }
 
         // Filter out empty lines that were marked for deletion
-        const filteredLines = resultLines.filter((line, idx) => {
-            if (line === '' && changes.some(c => c.line === idx + 1 && c.fixed === '(removed)')) {
-                return false;
-            }
-            return true;
-        });
+        const filteredLines = resultLines.filter(line => line !== '');
 
         return { lines: filteredLines, changes };
+    }
+
+    /**
+     * UNIVERSAL FIX 2: Aggressive Parent Colon Detection
+     * Adds colon to any single word followed by indented content
+     */
+    private aggressiveParentColonFix(lines: string[]): { lines: string[]; changes: FixChange[] } {
+        const changes: FixChange[] = [];
+        let resultLines = [...lines];
+
+        // Run 3 passes to catch nested missing colons
+        for (let pass = 0; pass < 3; pass++) {
+            let passChanges = 0;
+
+            for (let i = 0; i < resultLines.length - 1; i++) {
+                if (this.blockScalarLines.has(i)) continue;
+                const line = resultLines[i];
+
+                // Skip if already has colon
+                if (line.includes(':')) continue;
+
+                // Skip list items
+                if (line.trim().startsWith('-')) continue;
+
+                // Check if it's a single word
+                const match = line.match(/^(\s*)([a-zA-Z][a-zA-Z0-9_-]*)$/);
+                if (!match) continue;
+
+                const word = match[2];
+
+                // Skip boolean/null values
+                if (['true', 'false', 'null'].includes(word.toLowerCase())) continue;
+
+                // Find next non-empty line
+                let nextLine = '';
+                let nextLineIndent = -1;
+                for (let j = i + 1; j < resultLines.length; j++) {
+                    if (resultLines[j].trim() !== '') {
+                        nextLine = resultLines[j];
+                        nextLineIndent = this.getIndent(nextLine);
+                        break;
+                    }
+                }
+
+                // Check if next line is indented deeper (has children)
+                if (nextLineIndent <= this.getIndent(line)) continue;
+
+                // Either it's in known list OR next line looks like a child key
+                const isKnownParent = KNOWN_PARENT_KEYWORDS.has(word); // Assuming KNOWN_PARENT_KEYWORDS is defined elsewhere
+                const nextLineIsChild = nextLine.trim().match(/^[a-zA-Z]/);
+
+                if (isKnownParent || nextLineIsChild) {
+                    resultLines[i] = line.trimEnd() + ':';
+                    passChanges++;
+
+                    changes.push({
+                        line: i + 1,
+                        original: line,
+                        fixed: resultLines[i],
+                        reason: `Added missing colon to parent key "${word}"${isKnownParent ? ' (known parent)' : ' (detected parent)'}`,
+                        type: 'structure',
+                        confidence: isKnownParent ? 0.96 : 0.92,
+                        severity: 'error'
+                    });
+                }
+            }
+
+            // If no changes in this pass, stop early
+            if (passChanges === 0) break;
+        }
+
+        return { lines: resultLines, changes };
     }
 
     /**
@@ -1314,6 +1509,7 @@ export class MultiPassFixer {
         const resultLines = [...lines];
 
         for (let i = 0; i < resultLines.length; i++) {
+            if (this.blockScalarLines.has(i)) continue;
             const line = resultLines[i];
             const nextLine = resultLines[i + 1];
 
@@ -1351,6 +1547,7 @@ export class MultiPassFixer {
         const resultLines = [...lines];
 
         for (let i = 0; i < resultLines.length - 1; i++) {
+            if (this.blockScalarLines.has(i)) continue;
             const line = resultLines[i];
             const nextLine = resultLines[i + 1];
 
@@ -1392,6 +1589,7 @@ export class MultiPassFixer {
         ]);
 
         for (let i = 0; i < resultLines.length - 1; i++) {
+            if (this.blockScalarLines.has(i)) continue;
             const line = resultLines[i];
             const nextLine = resultLines[i + 1];
 
@@ -1436,6 +1634,7 @@ export class MultiPassFixer {
         const resultLines = [...lines];
 
         for (let i = 0; i < resultLines.length - 1; i++) {
+            if (this.blockScalarLines.has(i)) continue;
             const line = resultLines[i];
             const nextLine = resultLines[i + 1];
 
@@ -1468,6 +1667,7 @@ export class MultiPassFixer {
         const resultLines = [...lines];
 
         for (let i = 0; i < resultLines.length; i++) {
+            if (this.blockScalarLines.has(i)) continue;
             const line = resultLines[i];
 
             // Pattern: "- metadata" or "- spec" without colon
@@ -1501,6 +1701,7 @@ export class MultiPassFixer {
         let annotationsIndent = 0;
 
         for (let i = 0; i < resultLines.length; i++) {
+            if (this.blockScalarLines.has(i)) continue;
             const line = resultLines[i];
 
             // Detect annotations block start
@@ -1539,52 +1740,6 @@ export class MultiPassFixer {
     }
 
     /**
-     * UNIVERSAL FIX 2: Aggressive Parent Colon Detection
-     * Adds colon to any single word followed by indented content
-     */
-    private aggressiveParentColonFix(lines: string[]): { lines: string[]; changes: FixChange[] } {
-        const changes: FixChange[] = [];
-        const resultLines = [...lines];
-
-        for (let i = 0; i < resultLines.length - 1; i++) {
-            const line = resultLines[i];
-            const nextLine = resultLines[i + 1];
-
-            // Skip if already has colon
-            if (line.includes(':')) continue;
-
-            // Skip list items
-            if (line.trim().startsWith('-')) continue;
-
-            // Check if it's a single word
-            const match = line.match(/^(\s*)([a-zA-Z][a-zA-Z0-9_-]*)$/);
-            if (!match) continue;
-
-            const word = match[2];
-
-            // Skip boolean/null values
-            if (['true', 'false', 'null'].includes(word.toLowerCase())) continue;
-
-            // Check if next line is indented deeper
-            if (nextLine && this.getIndent(nextLine) > this.getIndent(line)) {
-                resultLines[i] = line.trimEnd() + ':';
-
-                changes.push({
-                    line: i + 1,
-                    original: line,
-                    fixed: resultLines[i],
-                    reason: `Added missing colon to parent key "${word}"`,
-                    type: 'structure',
-                    confidence: 0.94,
-                    severity: 'error'
-                });
-            }
-        }
-
-        return { lines: resultLines, changes };
-    }
-
-    /**
      * UNIVERSAL FIX 1: Field Name Validation
      * Validates and corrects top-level field names against Kubernetes schema
      */
@@ -1593,6 +1748,7 @@ export class MultiPassFixer {
         const resultLines = [...lines];
 
         for (let i = 0; i < resultLines.length; i++) {
+            if (this.blockScalarLines.has(i)) continue;
             if (!isRootLevel[i]) continue;
 
             const line = resultLines[i];
