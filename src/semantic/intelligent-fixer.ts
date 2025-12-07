@@ -93,7 +93,21 @@ const KNOWN_K8S_KEYS = new Set([
     'roleRef', 'subjects', 'apiGroup', 'verbs', 'resourceNames',
     'mountPath', 'subPath', 'readOnly', 'value', 'valueFrom',
     'configMapKeyRef', 'secretKeyRef', 'fieldRef', 'resourceFieldRef',
-    'scaleTargetRef', 'minReplicas', 'maxReplicas', 'metrics'
+    'scaleTargetRef', 'minReplicas', 'maxReplicas', 'metrics',
+    // Additional keys for completeness as requested
+    'status', 'binaryData', 'imagePullPolicy', 'securityContext',
+    'initContainers', 'volumeMounts', 'envFrom', 'ingress', 'egress',
+    'livenessProbe', 'readinessProbe', 'startupProbe'
+]);
+
+// Known Kubernetes Kinds for value normalization
+const KNOWN_KINDS = new Set([
+    'Pod', 'Deployment', 'Service', 'ConfigMap', 'Secret', 'Ingress',
+    'StatefulSet', 'DaemonSet', 'Job', 'CronJob', 'Namespace',
+    'ServiceAccount', 'PersistentVolume', 'PersistentVolumeClaim',
+    'Role', 'RoleBinding', 'ClusterRole', 'ClusterRoleBinding',
+    'ReplicaSet', 'HorizontalPodAutoscaler', 'NetworkPolicy',
+    'CustomResourceDefinition', 'StorageClass', 'IngressClass', 'PriorityClass'
 ]);
 
 // Common typos and their corrections
@@ -385,67 +399,56 @@ export class MultiPassFixer {
     }
 
     /**
-     * Helper: Fuzzy match a key against known K8s keys
+     * Helper: Normalize key for matching (remove all non-letters, lowercase)
+     */
+    private normalizeKeyForMatching(rawKey: string): string {
+        return rawKey.replace(/[^a-zA-Z]/g, '').toLowerCase();
+    }
+
+    /**
+     * Helper: Fuzzy match a key against known K8s keys using enhanced normalization
      */
     private fuzzyMatchKey(key: string): string | null {
-        // Don't fuzz short keys to avoid false positives
-        if (key.length < 3) return null;
+        // Step 1: Normalize input (remove ALL non-letters)
+        const normalizedInput = this.normalizeKeyForMatching(key);
 
-        // Exact match check (case-insensitive)
-        const lowerKey = key.toLowerCase();
-        for (const known of KNOWN_K8S_KEYS) {
-            if (known.toLowerCase() === lowerKey) return known;
-        }
-
-        // Check explicit typo map first
-        if (TYPO_CORRECTIONS[lowerKey]) return TYPO_CORRECTIONS[lowerKey];
-        if (FIELD_TYPO_MAP[key]) return FIELD_TYPO_MAP[key];
+        // Don't fuzz empty or very short normalized keys
+        if (normalizedInput.length < 2) return null;
 
         let bestMatch = null;
         let minDistance = Infinity;
 
-        // Threshold: 
-        // For short words (3-5 chars), allow 1 edit.
-        // For medium words (6-10 chars), allow 2 edits.
-        // For long words (>10 chars), allow 3 edits OR 40% difference.
-        // Special case: "api213244version" -> "apiVersion" (contains sub-sequence)
-
+        // Step 2: Check against all known keys
         for (const known of KNOWN_K8S_KEYS) {
+            // Normalize known key (cache this in real impl, but this is fine)
+            const normalizedKnown = this.normalizeKeyForMatching(known);
+
+            // Exact match on normalized form
+            if (normalizedInput === normalizedKnown) return known;
+
             // Optimization: Skip if length difference is too big
-            // Relaxed to 8 to catch "api213244version" (16 vs 10, diff 6)
-            if (Math.abs(known.length - key.length) > 8 && !key.includes(known) && !known.includes(key)) continue;
+            if (Math.abs(normalizedKnown.length - normalizedInput.length) > 4) continue;
 
-            const dist = this.levenshteinDistance(lowerKey, known.toLowerCase());
+            const dist = this.levenshteinDistance(normalizedInput, normalizedKnown);
 
-            // Calculate max allowed distance based on length
-            let maxDist = 1;
-            if (known.length > 5) maxDist = 2;
-            if (known.length > 10) maxDist = 3;
-
-            // Special handling for the user's specific example "api213244version"
-            // If the key strictly CONTAINS the known key (minus digits maybe?), it's a strong signal
-            // Or if known key is a subsequence of the noise
-            if (key.length > known.length && key.includes(known)) {
-                // "apiVersion" in "myapiVersion" -> dist will be high, but containment is true.
-                // We should be careful. "containerPort" contains "port".
-                // Let's rely on distance for now, but maybe allow higher distance if there is a substring match?
+            // Step 3: Threshold logic
+            // Default threshold: 2
+            // If first 2 chars match: 3
+            let maxDist = 2;
+            if (normalizedInput.substring(0, 2) === normalizedKnown.substring(0, 2)) {
+                maxDist = 3;
             }
-
-            // User example: api213244version (length 16) vs apiVersion (length 10). Dist is 6.
-            // My default maxDist is 3. This won't catch it.
-            // I need a more aggressive check for "very mangled" keys if they resemble important root keys.
-
-            // Aggressive check for Root Keys
-            if (['apiVersion', 'kind', 'metadata', 'spec'].includes(known)) {
-                // Allow up to 60% edits for these critical keys to catch wild typos
-                maxDist = Math.max(maxDist, Math.floor(key.length * 0.6));
-            }
+            // Strict for short words
+            if (normalizedKnown.length < 5) maxDist = 1;
 
             if (dist <= maxDist && dist < minDistance) {
                 minDistance = dist;
                 bestMatch = known;
             }
         }
+
+        // Step 4: Check explicit typo map using normalized input
+        if (TYPO_CORRECTIONS[normalizedInput]) return TYPO_CORRECTIONS[normalizedInput];
 
         return bestMatch;
     }
@@ -708,6 +711,13 @@ export class MultiPassFixer {
             if (typoResult) {
                 changes.push(typoResult.change);
                 line = typoResult.fixedLine;
+            }
+
+            // 1.7.5: Fix kind value typos (Dep!loyment -> Deployment)
+            const kindValueResult = this.fixKindValueTypos(line, lineNumber);
+            if (kindValueResult) {
+                changes.push(kindValueResult.change);
+                line = kindValueResult.fixedLine;
             }
 
             // 1.8: Universal Bare Key Detection
@@ -1173,6 +1183,65 @@ export class MultiPassFixer {
         return null;
     }
 
+    private fixKindValueTypos(line: string, lineNumber: number): { fixedLine: string; change: FixChange } | null {
+        // Match "kind: <Value>" or "kind <Value>"
+        const match = line.match(/^(\s*)(kind)(:?)\s+(.*)$/i);
+        if (!match) return null;
+
+        const [, indent, key, colon, value] = match;
+        // ignore comments
+        if (value.trim().startsWith('#')) return null;
+
+        const cleanValue = this.normalizeKeyForMatching(value);
+        if (cleanValue.length < 2) return null;
+
+        let bestMatch = null;
+        let minDist = Infinity;
+
+        // Check against known kinds using same fuzzy logic
+        for (const kind of KNOWN_KINDS) {
+            const normalizedKind = this.normalizeKeyForMatching(kind);
+
+            // Exact match normalized
+            if (cleanValue === normalizedKind) {
+                // If original was correct case, skip
+                if (value.trim() === kind) return null;
+                bestMatch = kind;
+                break;
+            }
+
+            const dist = this.levenshteinDistance(cleanValue, normalizedKind);
+
+            let maxDist = 2;
+            if (cleanValue.substring(0, 2) === normalizedKind.substring(0, 2)) maxDist = 3;
+
+            if (dist <= maxDist && dist < minDist) {
+                minDist = dist;
+                bestMatch = kind;
+            }
+        }
+
+        if (bestMatch) {
+            // Already correct?
+            if (value.trim() === bestMatch) return null;
+
+            const fixedLine = `${indent}kind: ${bestMatch}`;
+            return {
+                fixedLine,
+                change: {
+                    line: lineNumber,
+                    original: line,
+                    fixed: fixedLine,
+                    reason: `Normalized kind value: "${value.trim()}" → "${bestMatch}"`,
+                    type: 'semantic',
+                    confidence: 0.95,
+                    severity: 'error'
+                }
+            };
+        }
+        return null;
+    }
+
     // ==========================================
     // CRITICAL FIX METHODS
     // ==========================================
@@ -1238,12 +1307,13 @@ export class MultiPassFixer {
 
     /**
      * CRITICAL FIX 2: Field Name Typos & Fuzzy Matching
-     * Fixes: meta: -> metadata:, api213244version -> apiVersion
+     * Fixes: meta: -> metadata:, api213244version -> apiVersion, api!Version -> apiVersion
      */
     private fixFieldNameTypos(line: string, lineNumber: number): { fixedLine: string; change: FixChange } | null {
         // Universal field name typo detection
-        // Regex allows optional colon to catch "key value"
-        const match = line.match(/^(\s*)([a-zA-Z0-9_-]+)(:?)\s*(.*)$/);
+        // Regex allows optional colon, and captures ANY non-space non-colon chars as key
+        // Supports partial list prefix "- "
+        const match = line.match(/^(\s*-?\s*)([^\s:]+)(:?)\s*(.*)$/);
         if (!match) return null;
 
         const [, indent, fieldName, colon, rest] = match;
@@ -1251,26 +1321,31 @@ export class MultiPassFixer {
         // Skip if valid and has colon
         if (colon && KNOWN_K8S_KEYS.has(fieldName)) return null;
 
+        // SKIP comments
+        if (fieldName.startsWith('#')) return null;
+
         // SKIP numbers disguised as keys (e.g. "  8080:")
         if (/^\d+$/.test(fieldName)) return null;
 
         // SKIP common values that look like keys but aren't (e.g. "nginx" in "image: nginx")
-        // This method runs on the whole line. If line is "image: nginx", matching "image" (valid) returns null above.
-        // It won't match "nginx" because regex anchors to start ^.
+        // This regex anchors to start of line, so this is the KEY.
 
-        // If colon is missing, we must be VERY careful not to fuzzy match values.
-        // But since we anchored to start of line, we are matching the "key" part.
-        // e.g. "api372637version v1" -> fieldName="api372637version", rest="v1"
-
+        // Fuzzy match using Normalized Logic (strips special chars)
         const correctField = this.fuzzyMatchKey(fieldName);
 
         if (correctField && correctField !== fieldName) {
             // If we are replacing a "wild" typo, we force a colon.
+            // Check if rest is empty or has content.
+            // If rest is empty, we add colon. If rest exists, we add colon + space + rest.
+
+            // Note: 'rest' grouping `(.*)` includes leading spaces if they were after key/colon.
+            // But my regex `\s*(.*)` consumes spaces before rest. 
+            // So I should ensure separation.
+
             const fixedLine = `${indent}${correctField}: ${rest}`;
 
             // Higher confidence for longer words or small edit distances
-            const dist = this.levenshteinDistance(fieldName, correctField);
-            const confidence = dist === 1 ? 0.95 : (dist < 3 ? 0.90 : 0.85);
+            const confidence = 0.95; // High confidence because of normalized matching
 
             return {
                 fixedLine,
@@ -1491,7 +1566,15 @@ export class MultiPassFixer {
             }
             // Is it a known Level 1 key?
             else if (KNOWN_LEVELS[key] === 1) {
-                targetIndent = 2;
+                // If it's already at root (0), DO NOT force it to 2.
+                // This allows Pass 2 to detect it as a "stray root field" and move it to metadata properly.
+                // If we force it to 2 here, it might be syntactically appended to the previous block (e.g. metadata)
+                // causing duplicate keys that parsed out as valid but wrong.
+                if (currentIndent === 0) {
+                    targetIndent = 0;
+                } else {
+                    targetIndent = 2;
+                }
             }
 
             // HEURISTIC: If indentation matches the target, we are good.
@@ -2232,6 +2315,65 @@ export class MultiPassFixer {
         return changes;
     }
 
+    /**
+     * Helper: Cleanup stray top-level metadata fields
+     * Ensures name, labels, annotations, namespace exist ONLY under metadata
+     */
+    private cleanupTopLevelMetadataFields(doc: any): FixChange[] {
+        const changes: FixChange[] = [];
+        const fieldsToClean = ['name', 'labels', 'annotations', 'namespace'];
+
+        // Ensure metadata exists (it should by now, but just in case)
+        if (!doc.metadata) doc.metadata = {};
+
+        fieldsToClean.forEach(field => {
+            if (Object.prototype.hasOwnProperty.call(doc, field)) {
+                // Determine value to keep
+                const rootValue = doc[field];
+                const metaValue = doc.metadata[field];
+
+                // Special handling for 'name'
+                if (field === 'name') {
+                    // If metadata.name is placeholder "changeme-name" and root.name is real, use root
+                    if (metaValue === 'changeme-name' && rootValue && rootValue !== 'changeme-name') {
+                        doc.metadata.name = rootValue;
+                        changes.push({
+                            line: 1, original: `name: ${rootValue} (at root)`, fixed: `metadata.name: ${rootValue}`,
+                            reason: 'Promoted root name to metadata (replaced placeholder)', type: 'structure', confidence: 0.98, severity: 'error'
+                        });
+                    }
+                    // Else just delete root name (keep metadata version)
+                }
+                else {
+                    // For labels, annotations, namespace
+                    if (!metaValue && rootValue) {
+                        // Move to metadata
+                        doc.metadata[field] = rootValue;
+                        changes.push({
+                            line: 1, original: `${field} (at root)`, fixed: `metadata.${field}`,
+                            reason: `Moved root ${field} to metadata`, type: 'structure', confidence: 0.98, severity: 'error'
+                        });
+                    }
+                    // If exists in both, we prefer metadata version (per requirements)
+                    // and strictly delete root version.
+                }
+
+                // DELETE from root
+                delete doc[field];
+
+                // If we deleted it but didn't push a change (i.e. it was duplicative), record a cleanup change
+                if (metaValue) {
+                    changes.push({
+                        line: 1, original: `${field} (at root)`, fixed: '(deleted)',
+                        reason: `Removed stray root-level ${field} (kept metadata version)`, type: 'structure', confidence: 0.98, severity: 'warning'
+                    });
+                }
+            }
+        });
+
+        return changes;
+    }
+
     private pass2ASTReconstruction(content: string): { content: string; changes: FixChange[] } {
         const changes: FixChange[] = [];
 
@@ -2378,6 +2520,13 @@ export class MultiPassFixer {
                 const normChanges = this.normalizeValues(doc);
                 if (normChanges.length > 0) {
                     changes.push(...normChanges);
+                    hasChanges = true;
+                }
+
+                // 6. CLEANUP STRAY ROOT FIELDS
+                const cleanupChanges = this.cleanupTopLevelMetadataFields(doc);
+                if (cleanupChanges.length > 0) {
+                    changes.push(...cleanupChanges);
                     hasChanges = true;
                 }
 
