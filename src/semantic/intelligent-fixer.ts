@@ -2706,6 +2706,60 @@ export class MultiPassFixer {
                     hasChanges = true;
                 }
 
+                // 7. INFER MISSING VOLUMES FROM MOUNTS
+                const volumeMountNames = new Set<string>();
+                let containers: any[] = [];
+                let volumesTarget: any[] | null = null;
+
+                // Identify containers and volumes target based on kind
+                if (kind === 'Pod') {
+                    if (doc.spec && doc.spec.containers) {
+                        containers = doc.spec.containers;
+                        volumesTarget = doc.spec.volumes || null; // Might be undefined
+                    }
+                } else if (['Deployment', 'StatefulSet', 'DaemonSet', 'Job', 'ReplicaSet'].includes(kind)) {
+                    if (doc.spec && doc.spec.template && doc.spec.template.spec && doc.spec.template.spec.containers) {
+                        containers = doc.spec.template.spec.containers;
+                        volumesTarget = doc.spec.template.spec.volumes || null;
+                    }
+                }
+
+                // Collect mount names
+                containers.forEach((c: any) => {
+                    if (c.volumeMounts && Array.isArray(c.volumeMounts)) {
+                        c.volumeMounts.forEach((vm: any) => {
+                            if (vm.name) volumeMountNames.add(vm.name);
+                        });
+                    }
+                });
+
+                // Create missing volumes
+                if (volumeMountNames.size > 0) {
+                    // Ensure volumes array exists if we found mounts
+                    if (!volumesTarget) {
+                        if (kind === 'Pod') {
+                            doc.spec.volumes = [];
+                            volumesTarget = doc.spec.volumes;
+                        } else {
+                            // Workload
+                            doc.spec.template.spec.volumes = [];
+                            volumesTarget = doc.spec.template.spec.volumes;
+                        }
+                    }
+
+                    volumeMountNames.forEach(name => {
+                        const exists = volumesTarget!.some((v: any) => v.name === name);
+                        if (!exists) {
+                            volumesTarget!.push({ name: name, emptyDir: {} });
+                            changes.push({
+                                line: 1, original: `(missing volume ${name})`, fixed: `volumes: [{ name: ${name}, emptyDir: {} }]`,
+                                reason: `Added emptyDir volume for mount '${name}'`, type: 'structure', confidence: 0.95, severity: 'warning'
+                            });
+                            hasChanges = true;
+                        }
+                    });
+                }
+
                 if (hasChanges) {
                     docs[docIndex] = doc;
                 }
