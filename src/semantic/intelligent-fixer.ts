@@ -1659,10 +1659,10 @@ export class MultiPassFixer {
             'apiVersion': 0,
             'kind': 0,
             'metadata': 0,
-            'spec': 0,
-            'status': 0,
-            'data': 0,
-            'binaryData': 0,
+            // 'spec': 0, // Semantic check handles this (nesting allowed)
+            // 'status': 0,
+            // 'data': 0,
+            // 'binaryData': 0,
             // Metadata children - REMOVED because they can appear nested (e.g. env name, pod selector labels)
             // 'name': 1,
             // 'namespace': 1,
@@ -2538,21 +2538,30 @@ export class MultiPassFixer {
 
             for (let docIndex = 0; docIndex < docs.length; docIndex++) {
                 let doc = docs[docIndex] as any;
-                if (!doc || typeof doc !== 'object') continue;
+                if (!doc) continue;
+                // Handle primitive docs (just strings/nulls)? Skip them.
+                if (typeof doc !== 'object') continue;
 
                 // 1. INFER APIVERSION/KIND IF MISSING
                 let kind = doc.kind;
-                if (!kind) {
-                    // Inference Logic
-                    if (doc.spec && doc.spec.template) kind = 'Deployment';
-                    else if (doc.spec && doc.spec.containers) kind = 'Pod';
-                    else if (doc.data || doc.binaryData) kind = 'ConfigMap';
-                    else kind = 'Pod'; // Default fallback
+                if (!kind || kind === '') {
+                    // Inference Logic based on strict structure rules
+                    if (doc.spec && doc.spec.replicas && doc.spec.selector && doc.spec.template) {
+                        kind = 'Deployment';
+                    } else if (doc.spec && doc.spec.type && doc.spec.ports) {
+                        kind = 'Service';
+                    } else if (doc.data && !doc.spec) {
+                        kind = 'ConfigMap';
+                    } else if (doc.spec && doc.spec.containers && !doc.spec.replicas && !doc.spec.template) {
+                        kind = 'Pod';
+                    } else {
+                        kind = 'Pod'; // Default fallback
+                    }
 
                     doc.kind = kind;
                     changes.push({
                         line: 1, original: '(missing kind)', fixed: `kind: ${kind}`,
-                        reason: `Injected missing kind "${kind}"`, type: 'structure', confidence: 0.8, severity: 'error'
+                        reason: `Inferred missing kind "${kind}" from structure`, type: 'structure', confidence: 0.8, severity: 'error'
                     });
                     hasChanges = true;
                 }
@@ -2564,18 +2573,28 @@ export class MultiPassFixer {
                     hasChanges = true;
                 }
 
-                if (!doc.apiVersion) {
-                    // Try to use schema default or fallback
-                    doc.apiVersion = 'v1';
-                    // Improve this: simple mapping for common kinds
-                    if (['Deployment', 'StatefulSet', 'DaemonSet', 'ReplicaSet'].includes(kind)) doc.apiVersion = 'apps/v1';
-                    if (['CronJob', 'Job'].includes(kind)) doc.apiVersion = 'batch/v1';
-                    if (['Ingress'].includes(kind)) doc.apiVersion = 'networking.k8s.io/v1';
-                    if (['Service', 'Pod', 'ConfigMap', 'Secret', 'ServiceAccount'].includes(kind)) doc.apiVersion = 'v1';
+                if (!doc.apiVersion || doc.apiVersion === '') {
+                    // Inference Logic for ApiVersion based on Kind
+                    let apiVersion = 'v1'; // Default
 
+                    if (['Deployment', 'StatefulSet', 'DaemonSet', 'ReplicaSet'].includes(kind)) {
+                        apiVersion = 'apps/v1';
+                    } else if (['CronJob', 'Job'].includes(kind)) {
+                        apiVersion = 'batch/v1';
+                    } else if (['Ingress', 'NetworkPolicy'].includes(kind)) {
+                        apiVersion = 'networking.k8s.io/v1';
+                    } else if (['Role', 'ClusterRole', 'RoleBinding', 'ClusterRoleBinding'].includes(kind)) {
+                        apiVersion = 'rbac.authorization.k8s.io/v1';
+                    } else if (kind === 'HorizontalPodAutoscaler') {
+                        apiVersion = 'autoscaling/v2';
+                    } else if (['Pod', 'Service', 'ConfigMap', 'Secret', 'Namespace', 'PersistentVolumeClaim', 'ServiceAccount'].includes(kind)) {
+                        apiVersion = 'v1';
+                    }
+
+                    doc.apiVersion = apiVersion;
                     changes.push({
-                        line: 1, original: '(missing apiVersion)', fixed: `apiVersion: ${doc.apiVersion}`,
-                        reason: `Injected missing apiVersion "${doc.apiVersion}"`, type: 'structure', confidence: 0.9, severity: 'error'
+                        line: 1, original: '(missing apiVersion)', fixed: `apiVersion: ${apiVersion}`,
+                        reason: `Inferred missing apiVersion "${apiVersion}" for kind "${kind}"`, type: 'structure', confidence: 0.9, severity: 'error'
                     });
                     hasChanges = true;
                 }
@@ -2617,6 +2636,17 @@ export class MultiPassFixer {
                             reason: 'Relocated containers to spec.template.spec for workload controller',
                             type: 'structure', confidence: 0.95, severity: 'error'
                         });
+                        hasChanges = true;
+                    }
+                } else if (kind === 'Pod') {
+                    // Check for root containers on Pod
+                    if (doc.containers && !doc.spec) {
+                        doc.spec = {};
+                    }
+                    if (doc.containers && doc.spec) {
+                        doc.spec.containers = doc.containers;
+                        delete doc.containers;
+                        changes.push({ line: 1, original: 'containers', fixed: 'spec.containers', reason: 'Moved root containers to Pod structure', type: 'structure', confidence: 0.95, severity: 'error' });
                         hasChanges = true;
                     }
                 }
@@ -2692,10 +2722,10 @@ export class MultiPassFixer {
 
             if (hasChanges) {
                 // CANONICAL ORDERING
-                content = docs.map(doc => yaml.dump(doc, {
+                content = docs.map((doc: any) => yaml.dump(doc, {
                     indent: 2,
                     lineWidth: -1,
-                    sortKeys: (a, b) => {
+                    sortKeys: (a: any, b: any) => {
                         const order = ['apiVersion', 'kind', 'metadata', 'name', 'namespace', 'labels', 'annotations', 'spec', 'data', 'status'];
                         const ia = order.indexOf(a);
                         const ib = order.indexOf(b);
