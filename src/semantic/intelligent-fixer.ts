@@ -1658,7 +1658,7 @@ export class MultiPassFixer {
         const KNOWN_LEVELS: Record<string, number> = {
             'apiVersion': 0,
             'kind': 0,
-            'metadata': 0,
+            // 'metadata': 0, // Allow nesting (e.g. template.metadata)
             // 'spec': 0, // Semantic check handles this (nesting allowed)
             // 'status': 0,
             // 'data': 0,
@@ -1667,13 +1667,13 @@ export class MultiPassFixer {
             // 'name': 1,
             // 'namespace': 1,
             // 'labels': 1,
-            // 'annotations': 1
+            // 'annotations': 1,
             // 'labels': 1,
             // 'annotations': 1,
             // Spec children (Pod/Deployment/Service)
             'replicas': 1,
             'selector': 1,
-            'template': 1, // Deployment
+            // 'template': 1, // Deployment - Removed to prevent conflicts if nested deeper? No, template is usually level 1. BUT let's be safe.
             'containers': -1,
             'volumes': -1,
             'ports': -1,
@@ -2673,19 +2673,23 @@ export class MultiPassFixer {
                     }
                 }
 
-                // Ensure containers exist for Pod/Deployment
+                // Ensure containers exist for Pod/Deployment/StatefulSet/DaemonSet
                 if (kind === 'Pod') {
+                    if (!doc.spec) doc.spec = {};
                     if (!doc.spec.containers || doc.spec.containers.length === 0) {
                         doc.spec.containers = [{ name: 'app', image: 'changeme-image' }];
                         changes.push({ line: 1, original: '(missing containers)', fixed: 'containers: ...', reason: 'Injected placeholder container', type: 'semantic', confidence: 1, severity: 'error' });
                         hasChanges = true;
                     }
                 } else if (['Deployment', 'StatefulSet', 'DaemonSet'].includes(kind)) {
+                    if (!doc.spec) doc.spec = {};
+
                     if (!doc.spec.template) {
                         doc.spec.template = { metadata: { labels: { app: 'generated-app' } }, spec: { containers: [] } };
                         if (!doc.spec.selector) doc.spec.selector = { matchLabels: { app: 'generated-app' } };
                         hasChanges = true;
                     }
+                    if (!doc.spec.template.metadata) doc.spec.template.metadata = { labels: { app: 'generated-app' } };
                     if (!doc.spec.template.spec) doc.spec.template.spec = { containers: [] };
 
                     if (!doc.spec.template.spec.containers || doc.spec.template.spec.containers.length === 0) {
